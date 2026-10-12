@@ -14,9 +14,70 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var text: String
     }
 
+    /// Per-workspace details the stock sidebar shows (daemon/details.mjs). Optional, so an older
+    /// daemon still decodes.
     struct Workspace: Decodable, Equatable, Sendable {
+        struct Status: Decodable, Equatable, Sendable {
+            var key: String
+            var label: String
+            var value: String
+            var icon: String?
+            var color: String?
+        }
+
+        struct Progress: Decodable, Equatable, Sendable {
+            var value: Double
+            var label: String
+        }
+
+        struct Log: Decodable, Equatable, Sendable {
+            var level: String
+            var text: String
+        }
+
+        struct Link: Decodable, Equatable, Sendable {
+            var url: String
+            var label: String
+        }
+
+        struct Remote: Decodable, Equatable, Sendable {
+            var target: String
+            var state: String?
+        }
+
         var color: String?
         var description: String?
+        var path: String?
+        var branch: String?
+        var dirty: Bool?
+        var prs: [Link]?
+        var ports: [Int]?
+        var notification: String?
+        var remote: Remote?
+        var statuses: [Status]?
+        var progress: Progress?
+        var logs: [Log]?
+    }
+
+    /// cmux's own sidebar settings (Settings → Sidebar), read by the daemon.
+    struct Settings: Decodable, Equatable, Sendable {
+        var hideAllDetails = false
+        var showWorkspaceDescription = true
+        var showNotificationMessage = true
+        var notificationMessageLineLimit = 12
+        var showBranchDirectory = true
+        var showGitBranch = true
+        var showGitBranchIcon = true
+        var stackBranchDirectory = false
+        var pathLastSegmentOnly = false
+        var showPullRequests = true
+        var makePullRequestsClickable = true
+        var showPorts = true
+        var showSSH = true
+        var showLog = true
+        var showProgress = true
+        var showStatusPills = true
+        var showAgentActivity = true
     }
 
     struct Mood: Decodable, Equatable, Sendable {
@@ -37,6 +98,7 @@ struct DaemonState: Decodable, Equatable, Sendable {
     var bubble: Bubble
     var mood: Mood? // optional: older daemons don't send these
     var reaction: Reaction?
+    var settings: Settings?
     var workspaces: [String: Workspace]
 }
 

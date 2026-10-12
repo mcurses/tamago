@@ -4,6 +4,7 @@
 //   scripts/render-pet.sh [out.png]
 
 import AppKit
+import CmuxExtensionKit
 import SwiftUI
 
 struct Scenario {
@@ -69,11 +70,66 @@ func state(_ s: Scenario, reactionAt: Double) -> DaemonState {
     .environment(\.colorScheme, .dark)
 }
 
-@main
-struct RenderPet {
-    @MainActor static func main() {
-    let out = CommandLine.arguments.dropFirst().first ?? "pet-sheet.png"
-    let renderer = ImageRenderer(content: sheet())
+// MARK: workspace rows
+
+let rowWorkspaces: [(CmuxSidebarWorkspace, [String: Any])] = [
+    (CmuxSidebarWorkspace(id: UUID(), title: "tamago", isPinned: true, gitBranch: "main", unreadCount: 2), [
+        "path": "~/code/tamago", "branch": "main", "dirty": true,
+        "statuses": [["key": "claude_code", "label": "Claude Code", "value": "Running", "icon": "bolt.fill", "color": "#4C8DFF"]],
+        "notification": "Claude is waiting for your input",
+        "ports": [5193, 8765], "prs": [["url": "https://github.com/mcurses/tamago/pull/12", "label": "PR #12"]],
+    ]),
+    (CmuxSidebarWorkspace(id: UUID(), title: "emma_rev1 coordinator with a long title that truncates"), [
+        "path": "~/code/emma_rev1/very/deep/project/directory/structure", "branch": "slice/0517-author-window",
+        "statuses": [["key": "claude_code", "label": "Claude Code", "value": "Needs input", "icon": "bell.fill", "color": "#4C8DFF"]],
+        "progress": ["value": 0.4, "label": "Building 4/10"],
+        "logs": [["level": "warning", "text": "disk almost full"], ["level": "success", "text": "deploy done"]],
+        "remote": ["target": "VS7679", "state": "connected"], "description": "Pilot box driver work",
+    ]),
+    (CmuxSidebarWorkspace(id: UUID(), title: "portfolio"), ["path": "~/code/portfolio", "ports": [4321]]),
+]
+
+func settingsJSON(_ allOn: Bool) -> [String: Any] {
+    // "yours" = the values cmux had saved on the dev machine when this was written.
+    let yours: [String: Any] = [
+        "hideAllDetails": false, "showWorkspaceDescription": true, "showNotificationMessage": false,
+        "notificationMessageLineLimit": 12, "showBranchDirectory": false, "showGitBranch": true,
+        "showGitBranchIcon": true, "stackBranchDirectory": false, "pathLastSegmentOnly": false,
+        "showPullRequests": false, "makePullRequestsClickable": true, "showPorts": false, "showSSH": false,
+        "showLog": false, "showProgress": false, "showStatusPills": false, "showAgentActivity": false,
+    ]
+    return allOn ? yours.mapValues { ($0 as? Bool).map { _ in true as Any } ?? $0 }.merging(["hideAllDetails": false, "stackBranchDirectory": false, "pathLastSegmentOnly": false]) { $1 } : yours
+}
+
+@MainActor func rowsSheet() -> some View {
+    HStack(alignment: .top, spacing: 16) {
+        ForEach([true, false], id: \.self) { allOn in
+            let workspaces = Dictionary(uniqueKeysWithValues: rowWorkspaces.map { ($0.0.id.uuidString, $0.1) })
+            let json: [String: Any] = [
+                "pet": ["species": "ghost", "name": "Soup"],
+                "bubble": ["at": 0, "mood": "idle", "about": "-", "text": "-"],
+                "settings": settingsJSON(allOn),
+                "workspaces": workspaces,
+            ]
+            let state = try! JSONDecoder().decode(DaemonState.self, from: JSONSerialization.data(withJSONObject: json))
+            let model = SidebarModel(preview: state)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(allOn ? "every detail on" : "your cmux settings").font(.system(size: 10, design: .monospaced))
+                ForEach(Array(rowWorkspaces.enumerated()), id: \.offset) { i, w in
+                    WorkspaceRow(workspace: w.0, selected: i == 0, extra: model.extra(for: w.0.id), model: model, renaming: .constant(nil))
+                }
+            }
+            .frame(width: 250)
+            .border(Color.gray.opacity(0.3))
+        }
+    }
+    .padding(10)
+    .background(Color(hex: "#1E1E1E")!)
+    .environment(\.colorScheme, .dark)
+}
+
+@MainActor func write<V: View>(_ view: V, to out: String) {
+    let renderer = ImageRenderer(content: view)
     renderer.scale = 2
     guard let image = renderer.cgImage,
           let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
@@ -81,5 +137,13 @@ struct RenderPet {
     }
     try! png.write(to: URL(fileURLWithPath: out))
     print("wrote \(out) (\(image.width)x\(image.height))")
+}
+
+@main
+struct RenderPet {
+    @MainActor static func main() {
+        let out = CommandLine.arguments.dropFirst().first ?? "pet-sheet.png"
+        write(sheet(), to: out)
+        write(rowsSheet(), to: out.replacingOccurrences(of: "pet-sheet", with: "rows-sheet"))
     }
 }

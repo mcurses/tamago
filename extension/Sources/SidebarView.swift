@@ -55,38 +55,53 @@ struct WorkspaceRow: View {
     @State private var draft = ""
     @FocusState private var focused: Bool
 
+    private var settings: DaemonState.Settings { model.daemon?.settings ?? DaemonState.Settings() }
+
     var body: some View {
-        HStack(spacing: 6) {
-            Capsule()
-                .fill(extra?.color.flatMap(Color.init(hex:)) ?? .clear)
-                .frame(width: 3, height: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                if renaming == workspace.id {
-                    TextField("Name", text: $draft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                        .focused($focused)
-                        .onSubmit {
-                            model.act("rename", workspace: workspace.id, ["title": draft])
-                            renaming = nil
-                        }
-                        .onExitCommand { renaming = nil }
-                        .onAppear {
-                            draft = workspace.title
-                            focused = true
-                        }
-                } else {
-                    Text(workspace.title)
-                        .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                if let branch = workspace.gitBranch, !branch.isEmpty {
-                    Text(branch)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+        VStack(alignment: .leading, spacing: 2) {
+            titleLine
+            if !settings.hideAllDetails { details }
+        }
+        .padding(.leading, 9)
+        // The workspace color as a stripe exactly as tall as the row's content.
+        .overlay(alignment: .leading) {
+            Capsule().fill(extra?.color.flatMap(Color.init(hex:)) ?? .clear).frame(width: 3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color(hex: "#3D7BFF40")! : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { model.select(workspace.id) }
+        .contextMenu { menu }
+    }
+
+    private var titleLine: some View {
+        HStack(spacing: 4) {
+            if settings.showAgentActivity && agentBusy {
+                Image(systemName: "circle.dotted")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .symbolEffect(.variableColor.iterative, options: .repeating)
+            }
+            if renaming == workspace.id {
+                TextField("Name", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($focused)
+                    .onSubmit {
+                        model.act("rename", workspace: workspace.id, ["title": draft])
+                        renaming = nil
+                    }
+                    .onExitCommand { renaming = nil }
+                    .onAppear {
+                        draft = workspace.title
+                        focused = true
+                    }
+            } else {
+                Text(workspace.title)
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             Spacer(minLength: 0)
             if workspace.isPinned {
@@ -100,11 +115,134 @@ struct WorkspaceRow: View {
                     .background(Circle().fill(Color.accentColor))
             }
         }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color(hex: "#3D7BFF40")! : .clear))
-        .contentShape(Rectangle())
-        .onTapGesture { model.select(workspace.id) }
-        .contextMenu { menu }
+    }
+
+    /// A coding agent is working here: the stock sidebar's loading spinner.
+    private var agentBusy: Bool {
+        (extra?.statuses ?? []).contains { $0.value.range(of: "running|working|thinking", options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+
+    /// The stock sidebar's detail rows, each behind its cmux setting.
+    @ViewBuilder private var details: some View {
+        let small = Font.system(size: 10)
+        if settings.showWorkspaceDescription, let d = extra?.description, !d.isEmpty {
+            Text(d).font(small).foregroundStyle(.secondary).lineLimit(2)
+        }
+        if settings.showNotificationMessage, let n = extra?.notification, !n.isEmpty {
+            Text(n).font(small).foregroundStyle(.secondary).lineLimit(max(1, settings.notificationMessageLineLimit))
+        }
+        branchAndPath
+        if settings.showStatusPills, let statuses = extra?.statuses, !statuses.isEmpty {
+            FlowRow(spacing: 3) {
+                ForEach(statuses, id: \.key) { statusPill($0) }
+            }
+        }
+        if settings.showProgress, let p = extra?.progress {
+            VStack(alignment: .leading, spacing: 1) {
+                Capsule().fill(Color.secondary.opacity(0.25)).frame(height: 3)
+                    .overlay(alignment: .leading) {
+                        GeometryReader { g in
+                            Capsule().fill(Color.accentColor).frame(width: g.size.width * min(max(p.value, 0), 1))
+                        }
+                    }
+                if !p.label.isEmpty { Text(p.label).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1) }
+            }
+        }
+        if settings.showLog, let logs = extra?.logs, !logs.isEmpty {
+            ForEach(Array(logs.enumerated()), id: \.offset) { _, entry in
+                Text(entry.text).font(.system(size: 9, design: .monospaced)).foregroundStyle(logColor(entry.level)).lineLimit(1)
+            }
+        }
+        chips
+    }
+
+    @ViewBuilder private var branchAndPath: some View {
+        let branch = settings.showGitBranch ? (extra?.branch ?? workspace.gitBranch).flatMap { $0.isEmpty ? nil : $0 } : nil
+        let path = settings.showBranchDirectory ? extra?.path : nil
+        let branchText = branch.map { b in
+            HStack(spacing: 2) {
+                if settings.showGitBranchIcon { Image(systemName: "arrow.triangle.branch") }
+                Text(b + (extra?.dirty == true ? "*" : "")).lineLimit(1)
+            }
+        }
+        let pathText = path.map { Text($0).lineLimit(1).truncationMode(settings.pathLastSegmentOnly ? .head : .middle) }
+        Group {
+            if settings.stackBranchDirectory {
+                branchText
+                pathText
+            } else if branch != nil || path != nil {
+                HStack(spacing: 4) {
+                    branchText
+                    if branch != nil && path != nil { Text("·") }
+                    pathText
+                }
+            }
+        }
+        .font(.system(size: 9, design: .monospaced))
+        .foregroundStyle(.secondary)
+    }
+
+    private func statusPill(_ s: DaemonState.Workspace.Status) -> some View {
+        let color = s.color.flatMap(Color.init(hex:)) ?? .secondary
+        return HStack(spacing: 2) {
+            if let icon = s.icon { Image(systemName: icon) }
+            Text("\(s.label): \(s.value)").lineLimit(1)
+        }
+        .font(.system(size: 9, weight: .medium))
+        .foregroundStyle(color)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(color.opacity(0.15)))
+    }
+
+    /// Ports, pull requests and the SSH target as small chips; links open the way cmux's settings say.
+    @ViewBuilder private var chips: some View {
+        let ports = settings.showPorts ? (extra?.ports ?? []) : []
+        let prs = settings.showPullRequests ? (extra?.prs ?? []) : []
+        let remote = settings.showSSH ? extra?.remote : nil
+        if !ports.isEmpty || !prs.isEmpty || remote != nil {
+            FlowRow(spacing: 3) {
+                ForEach(ports, id: \.self) { port in
+                    chip(":\(port)", icon: "network") {
+                        model.act("open-url", workspace: workspace.id, ["url": "http://localhost:\(port)", "via": "port"])
+                    }
+                }
+                ForEach(prs, id: \.url) { pr in
+                    chip(pr.label, icon: "arrow.triangle.pull", action: settings.makePullRequestsClickable ? {
+                        model.act("open-url", workspace: workspace.id, ["url": pr.url, "via": "pr"])
+                    } : nil)
+                }
+                if let remote {
+                    chip(remote.target + (remote.state.map { " · \($0)" } ?? ""), icon: "network.badge.shield.half.filled", action: nil)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func chip(_ text: String, icon: String, action: (() -> Void)?) -> some View {
+        let label = HStack(spacing: 2) {
+            Image(systemName: icon)
+            Text(text).lineLimit(1)
+        }
+        .font(.system(size: 9, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(Capsule().stroke(Color.secondary.opacity(0.4), lineWidth: 0.5))
+        if let action {
+            Button(action: action) { label }.buttonStyle(.plain)
+        } else {
+            label
+        }
+    }
+
+    private func logColor(_ level: String) -> Color {
+        switch level {
+        case "error": Color(hex: "#F7768E")!
+        case "warning": Color(hex: "#E0AF68")!
+        case "success": Color(hex: "#9ECE6A")!
+        default: .secondary
+        }
     }
 
     @ViewBuilder private var menu: some View {
@@ -339,6 +477,44 @@ struct PetFooter: View {
         if seconds < 60 { return "just now" }
         if seconds < 3600 { return "\(Int(seconds / 60))m ago" }
         return "\(Int(seconds / 3600))h ago"
+    }
+}
+
+/// Lays children out left to right and wraps to the next line when the row is full.
+struct FlowRow: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: rows.map(\.width).max() ?? 0, height: rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(subviews, width: bounds.width) {
+            var x = bounds.minX
+            for i in row.items {
+                let size = subviews[i].sizeThatFits(.unspecified)
+                subviews[i].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> [Row] {
+        var rows = [Row()]
+        for i in subviews.indices {
+            let size = subviews[i].sizeThatFits(.unspecified)
+            if !rows[rows.count - 1].items.isEmpty && rows[rows.count - 1].width + spacing + size.width > width { rows.append(Row()) }
+            let gap = rows[rows.count - 1].items.isEmpty ? 0 : spacing
+            rows[rows.count - 1].items.append(i)
+            rows[rows.count - 1].width += gap + size.width
+            rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
+        }
+        return rows
     }
 }
 
