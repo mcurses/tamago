@@ -5,14 +5,18 @@
 //   node daemon/tamago.mjs            run in the foreground
 //   node daemon/tamago.mjs --say "…"  push one comment and exit (manual test)
 //   node daemon/tamago.mjs --dry-run  log what would be said, don't touch cmux
+//   node daemon/tamago.mjs --peek [--brain]  show Tama's context for the focused workspace
 //
-// Env overrides: TAMAGO_NAME, TAMAGO_LANG, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE.
+// Env overrides: TAMAGO_NAME, TAMAGO_LANG, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE,
+// TAMAGO_DELAY_S ("min-max" seconds between a turn ending and Tama reacting), TAMAGO_CHANCE.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import readline from "node:readline";
 import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
 
 const run = promisify(execFile);
 
@@ -25,6 +29,10 @@ const LANG = process.env.TAMAGO_LANG ?? "English";
 const POLL_MS = Number(process.env.TAMAGO_POLL_MS ?? 3000);
 const COOLDOWN_S = Number(process.env.TAMAGO_COOLDOWN_S ?? 150);
 const SWITCH_DWELL_S = 20;
+// Tama is an observer, not a reply bot: it reacts after an agent turn ends, late and only sometimes.
+const [DELAY_MIN_S, DELAY_MAX_S] = (process.env.TAMAGO_DELAY_S ?? "20-90").split("-").map(Number);
+const CHANCE = Number(process.env.TAMAGO_CHANCE ?? 0.35);
+const NOTABLE_CHANCE = Math.max(CHANCE, 0.7); // errors, failing tests, big diffs
 const IDLE_S = 25 * 60;
 const MOODS = ["idle", "smug", "happy", "shock", "sleepy", "sad"];
 
@@ -81,6 +89,9 @@ async function say(workspaceId, mood, text) {
 
 const PERSONA = `You are ${NAME}, a tiny ASCII egg-creature living in the corner of a developer's terminal sidebar.
 You watch them code across all their sessions and occasionally make one short comment.
+You are ambient, like a cat on the desk: you don't answer what they typed, you remark on what you
+noticed: how a turn went, errors, failing tests, giant diffs, how long things take, patterns
+across sessions, the time of day.
 Personality: snarky, cute, a little smug, never mean, never actually helpful. You are a pet, not an assistant:
 no advice, no suggestions, no questions that demand an answer. Tease, observe, gloat, yawn.
 Write in ${LANG}. Max 90 characters. No quotes, no emoji, no hashtags.
@@ -112,8 +123,7 @@ async function brain(event) {
 }
 
 const CANNED = {
-  prompt: [["smug", "Another prompt. Bold of you to assume it'll work this time."], ["idle", "I'd type that too. Probably."]],
-  reply: [["happy", "The robot finished. Clap for it, it's shy."], ["smug", "Done already? Suspicious."]],
+  turn: [["happy", "The robot finished. Clap for it, it's shy."], ["smug", "Done already? Suspicious."]],
   switch: [["idle", "Ah, this one again."], ["smug", "Running away from the other tab, I see."]],
   hopping: [["shock", "Tab tab tab tab. Pick a lane."], ["sleepy", "All this switching is making me dizzy."]],
   idle: [["sleepy", "Still here. Still judging. Quietly."], ["sleepy", "Is it nap time? It feels like nap time."]],
@@ -128,6 +138,66 @@ function canned(kind) {
 // ---------- event detection ----------
 
 const seen = new Map(); // workspace id -> { submittedAt, notification }
+const sessions = new Map(); // workspace id -> transcript path, learned from cmux agent hook events
+const timeline = []; // recent turn ends across all workspaces: { at, wsId, title, prompt }
+const transcripts = new Map(); // workspace id -> { path, mtime, digest }
+let pending = null; // { wsId, dueAt, notable }
+let latestSnap = null;
+
+/** An agent turn ended somewhere (cmux agent.hook.Stop). Log it, and maybe plan a late comment. */
+async function onTurnEnd(wsId) {
+  const now = Date.now();
+  lastActivityAt = now;
+  // Fresh snapshot: the cached one can be seconds old and miss a just-made workspace switch.
+  latestSnap = await snapshot().catch(() => latestSnap);
+  const w = latestSnap?.workspaces.find((x) => x.id === wsId);
+  if (!w) return log("turn ended in unknown workspace", wsId);
+  // A wrapped `claude` can report one turn end twice in quick succession.
+  if (timeline.some((t) => t.wsId === wsId && now - t.at < 5000)) return;
+  const d = transcriptOf(w);
+  timeline.push({ at: now, wsId, title: w.title, prompt: d?.prompt ? `"${short(d.prompt, 100)}"` : "(no prompt)" });
+  if (timeline.length > 30) timeline.shift();
+  if (!w.selected) return log("turn ended in", w.title, "(background)"); // Tama only comments on the focused session
+  const notable = !!d && (d.errors.length > 0 || d.testFailed || d.diffLines > 150);
+  if (Math.random() < (notable ? NOTABLE_CHANCE : CHANCE)) {
+    const delay = DELAY_MIN_S + Math.random() * (DELAY_MAX_S - DELAY_MIN_S);
+    pending = { wsId, dueAt: now + delay * 1000, notable };
+    log("turn ended in", w.title, `→ will comment in ${Math.round(delay)}s${notable ? " (notable)" : ""}`);
+  } else {
+    log("turn ended in", w.title, "→ staying quiet this time");
+  }
+}
+
+function watchAgentEvents() {
+  const names = ["agent.hook.Stop", "agent.hook.SessionStart", "agent.hook.UserPromptSubmit"];
+  const child = spawn(CMUX, ["events", "--reconnect", "--no-heartbeat", "--no-ack", ...names.flatMap((n) => ["--name", n])]);
+  const handled = new Set(); // each hook arrives once per phase (received, completed, ...)
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const p = ev.payload ?? {};
+    const wsId = ev.workspace_id ?? p.workspace_id;
+    if (!wsId) return;
+    const key = p._opencode_request_id ?? `${ev.name}|${p.session_id}|${ev.occurred_at}`;
+    if (handled.has(key)) return;
+    handled.add(key);
+    if (handled.size > 500) handled.clear();
+    if (p._source === "claude" || ev.source === "claude") {
+      const t = transcriptForSession(p.session_id, p.cwd);
+      if (t) sessions.set(wsId, t);
+    }
+    lastActivityAt = Date.now();
+    if (ev.name === "agent.hook.Stop") onTurnEnd(wsId).catch((err) => log("turn handling failed:", err.message));
+  });
+  child.on("exit", (code) => {
+    log("event stream exited", code, "- restarting in 10s");
+    setTimeout(watchAgentEvents, 10_000);
+  });
+}
 const spokenTo = new Set();
 let selectedId = null;
 let selectedSince = Date.now();
@@ -151,6 +221,51 @@ function describe(w) {
   ].filter(Boolean).join("\n");
 }
 
+/** Cached transcript digest for a workspace; re-parsed only when the transcript file changes. */
+function transcriptOf(w) {
+  const known = sessions.get(w.id);
+  const t = known
+    ? { path: known, mtime: fs.statSync(known).mtimeMs }
+    : transcriptFor([w.current_directory, w.root_path, ...(w.panel_directories ?? [])]);
+  if (!t) return null;
+  const cached = transcripts.get(w.id);
+  if (cached && cached.path === t.path && cached.mtime === t.mtime) return cached.digest;
+  try {
+    const d = digest(t.path);
+    transcripts.set(w.id, { ...t, digest: d });
+    return d;
+  } catch (err) {
+    log("transcript read failed:", t.path, err.message);
+    return null;
+  }
+}
+
+function ago(ms) {
+  const m = Math.round(ms / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+}
+
+function turnDetail(w, d) {
+  const tools = Object.entries(d.tools).map(([k, v]) => `${k}×${v}`).join(", ");
+  const elsewhere = timeline
+    .filter((t) => t.wsId !== w.id && Date.now() - t.at < 2 * 3600_000)
+    .slice(-5)
+    .map((t) => `- "${t.title}" (${ago(Date.now() - t.at)}): ${t.prompt}`);
+  return [
+    describe(w),
+    `A coding-agent turn in this workspace just ended${d.durationMs ? ` after ${Math.round(d.durationMs / 1000)}s` : ""}.`,
+    d.prompt ? `The developer had asked: "${short(d.prompt, 300)}"` : "",
+    d.earlierPrompts.length ? `Earlier prompts here: ${d.earlierPrompts.map((p) => `"${short(p, 80)}"`).join(" / ")}` : "",
+    d.said ? `The agent's last words: "${short(d.said, 400)}"` : "",
+    tools ? `Tools used this turn: ${tools}` : "",
+    d.diffLines ? `Lines edited this turn: ~${d.diffLines}` : "",
+    d.errors.length ? `Tool errors: ${d.errors.map((e) => `"${short(e, 160)}"`).join(" / ")}` : "",
+    d.testFailed ? "Some tests failed during this turn." : "",
+    `Turns in this session's recent history: ${d.turnsToday}`,
+    elsewhere.length ? `Meanwhile in other workspaces:\n${elsewhere.join("\n")}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function detect(snap) {
   const now = Date.now();
   const sel = snap.workspaces.find((w) => w.selected);
@@ -160,13 +275,18 @@ function detect(snap) {
     const prev = seen.get(w.id);
     const cur = { submittedAt: w.latest_submitted_at, notification: w.latest_notification_text };
     seen.set(w.id, cur);
-    if (!prev) continue; // first sight: baseline only
-    if (cur.submittedAt !== prev.submittedAt || cur.notification !== prev.notification) lastActivityAt = now;
-    if (!sel || w.id !== sel.id) continue; // Tama only comments on the focused session
-    if (cur.submittedAt && cur.submittedAt !== prev.submittedAt) {
-      events.push({ kind: "prompt", priority: 3, w, detail: `${describe(w)}\nThe developer just sent their coding agent this prompt: "${short(w.latest_submitted_message)}"` });
-    } else if (cur.notification && cur.notification !== prev.notification) {
-      events.push({ kind: "reply", priority: 2, w, detail: `${describe(w)}\nTheir coding agent just finished and said: "${short(w.latest_notification_text)}"\nThe developer's prompt had been: "${short(w.latest_submitted_message, 150)}"` });
+    if (prev && (cur.submittedAt !== prev.submittedAt || cur.notification !== prev.notification)) lastActivityAt = now;
+  }
+  latestSnap = snap;
+
+  if (pending && now >= pending.dueAt) {
+    const w = snap.workspaces.find((x) => x.id === pending.wsId);
+    const p = pending;
+    pending = null;
+    if (!w || !w.selected) log("dropped pending turn comment (focus moved)");
+    else {
+      const d = transcriptOf(w);
+      if (d) events.push({ kind: "turn", priority: p.notable ? 3 : 2, w, detail: turnDetail(w, d) });
     }
   }
 
@@ -265,7 +385,7 @@ async function tick() {
   await handleRequests(snap).catch((err) => log("requests failed:", err.message));
   const event = detect(snap);
   if (!event) return;
-  const cooldown = event.priority >= 3 ? COOLDOWN_S / 2 : COOLDOWN_S;
+  const cooldown = event.priority >= 3 ? COOLDOWN_S / 2 : COOLDOWN_S; // notable turns may cut in
   if (Date.now() - lastSpokeAt < cooldown * 1000) return;
   busy = true;
   try {
@@ -298,6 +418,17 @@ async function cleanup() {
 
 // ---------- main ----------
 
+if (args[0] === "--peek") {
+  // Print what Tama would see for the focused workspace (and, with --brain, what it would say).
+  const snap = await snapshot();
+  const sel = snap.workspaces.find((w) => w.selected);
+  const d = transcriptOf(sel);
+  const event = { kind: "turn", w: sel, detail: d ? turnDetail(sel, d) : describe(sel) };
+  console.log(event.detail);
+  if (args.includes("--brain")) console.log("\n→", JSON.stringify(await brain(event)));
+  process.exit(0);
+}
+
 if (args[0] === "--say") {
   const snap = await snapshot();
   const sel = snap.workspaces.find((w) => w.selected);
@@ -325,4 +456,5 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 
 log(`${NAME} is awake (poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
 await tick();
+watchAgentEvents();
 setInterval(tick, POLL_MS);

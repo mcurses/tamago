@@ -5,13 +5,19 @@ sessions and now and then makes a snarky, deliberately unhelpful one-liner about
 
 - `sidebar/tamago.swift`: cmux custom sidebar (workspace list + pinned pet). Symlinked into
   `~/.config/cmux/sidebars/`, hot-reloads on save.
-- `daemon/tamago.mjs`: polls `cmux rpc extension.sidebar.snapshot`, detects events (new prompt,
-  agent finished, workspace switch, tab hopping, idle), asks Haiku via `claude -p` for a line, and
-  writes it to the focused workspace's progress label as `tamago|<epoch>|<mood>|<text>`.
+- `daemon/tamago.mjs`: follows `cmux events` (agent hook events) and the sidebar snapshot. When a
+  coding-agent turn ends in the focused workspace it maybe (35%, 70% if the turn had errors, failing
+  tests or a big diff) comments 20-90 s later, using a digest of the Claude transcript
+  (`daemon/transcript.mjs`) plus a log of recent turns in other workspaces. Also reacts to tab
+  hopping, dwelling on a workspace and long idle stretches. Lines come from Haiku via `claude -p`
+  and reach the sidebar through the focused workspace's progress label as
+  `tamago|<epoch>|<mood>|<text>`.
 
 ```sh
 ./scripts/install.sh               # from a cmux terminal
 node daemon/tamago.mjs --say "hi" happy   # push one comment by hand
+node daemon/tamago.mjs --peek --brain     # show Tama's context for the focused workspace + a sample line
+TAMAGO_DELAY_S=2-4 TAMAGO_CHANCE=1 node daemon/tamago.mjs --dry-run   # fast, log-only test run
 tail -f ~/.local/state/tamago/tamago.log
 ./scripts/uninstall.sh
 ```
