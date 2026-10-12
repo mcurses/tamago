@@ -115,13 +115,9 @@ func buddy(_ t) -> some View {
 }
 
 // Same trick as workspace Rename: the marker goes into some workspace's description (any one will
-// do), the daemon restores the description and acts on it. Markers are literals on purpose.
-func petRequest(_ w, _ marker) {
-    cmux("workspace.action", workspace_id: w.id, action: "set_description", description: marker)
-}
-
+// do), the daemon restores the description and acts on it.
 func petMenu(_ w) -> some View {
-    Button("Rename " + petName() + "…") { petRequest(w, "tamago:petname") }
+    Button("Rename " + petName() + "…") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:petname") }
     Menu("Species") { speciesMenu(w) }
 }
 
@@ -152,26 +148,26 @@ func speciesArt(_ s) -> String {
 }
 
 func speciesMenu(_ w) -> some View {
-    Button("Egg") { petRequest(w, "tamago:species:egg") }
+    Button("Egg") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:egg") }
     Divider()
-    Button("Duck") { petRequest(w, "tamago:species:duck") }
-    Button("Goose") { petRequest(w, "tamago:species:goose") }
-    Button("Blob") { petRequest(w, "tamago:species:blob") }
-    Button("Cat") { petRequest(w, "tamago:species:cat") }
-    Button("Dragon") { petRequest(w, "tamago:species:dragon") }
-    Button("Octopus") { petRequest(w, "tamago:species:octopus") }
-    Button("Owl") { petRequest(w, "tamago:species:owl") }
-    Button("Penguin") { petRequest(w, "tamago:species:penguin") }
-    Button("Turtle") { petRequest(w, "tamago:species:turtle") }
-    Button("Snail") { petRequest(w, "tamago:species:snail") }
-    Button("Ghost") { petRequest(w, "tamago:species:ghost") }
-    Button("Axolotl") { petRequest(w, "tamago:species:axolotl") }
-    Button("Capybara") { petRequest(w, "tamago:species:capybara") }
-    Button("Cactus") { petRequest(w, "tamago:species:cactus") }
-    Button("Robot") { petRequest(w, "tamago:species:robot") }
-    Button("Rabbit") { petRequest(w, "tamago:species:rabbit") }
-    Button("Mushroom") { petRequest(w, "tamago:species:mushroom") }
-    Button("Chonk") { petRequest(w, "tamago:species:chonk") }
+    Button("Duck") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:duck") }
+    Button("Goose") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:goose") }
+    Button("Blob") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:blob") }
+    Button("Cat") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:cat") }
+    Button("Dragon") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:dragon") }
+    Button("Octopus") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:octopus") }
+    Button("Owl") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:owl") }
+    Button("Penguin") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:penguin") }
+    Button("Turtle") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:turtle") }
+    Button("Snail") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:snail") }
+    Button("Ghost") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:ghost") }
+    Button("Axolotl") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:axolotl") }
+    Button("Capybara") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:capybara") }
+    Button("Cactus") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:cactus") }
+    Button("Robot") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:robot") }
+    Button("Rabbit") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:rabbit") }
+    Button("Mushroom") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:mushroom") }
+    Button("Chonk") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:species:chonk") }
 }
 // END species
 
@@ -193,23 +189,21 @@ func agoLabel(_ secs) -> String {
     return "\(secs / 3600)h ago"
 }
 
-func act(_ w, _ action) {
-    cmux("workspace.action", workspace_id: w.id, action: action)
-}
-
 func colorItem(_ w, _ name, _ hex) -> some View {
     Button(name) { cmux("workspace.action", workspace_id: w.id, action: "set_color", color: hex) }
 }
 
+// Button actions must be a cmux(...) call itself: a call to a helper func that calls cmux runs
+// nothing (that is how the species menu and Pin/Move silently did nothing).
 func menu(_ w) -> some View {
     // No text input exists in sidebars; the daemon sees this marker and shows a rename dialog.
     Button("Rename…") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:rename") }
-    Button(w.pinned ? "Unpin" : "Pin") { act(w, w.pinned ? "unpin" : "pin") }
-    Button(w.unread > 0 ? "Mark as Read" : "Mark as Unread") { act(w, w.unread > 0 ? "mark_read" : "mark_unread") }
+    Button(w.pinned ? "Unpin" : "Pin") { cmux("workspace.action", workspace_id: w.id, action: w.pinned ? "unpin" : "pin") }
+    Button(w.unread > 0 ? "Mark as Read" : "Mark as Unread") { cmux("workspace.action", workspace_id: w.id, action: w.unread > 0 ? "mark_read" : "mark_unread") }
     Divider()
-    Button("Move to Top") { act(w, "move_top") }
-    Button("Move Up") { act(w, "move_up") }
-    Button("Move Down") { act(w, "move_down") }
+    Button("Move to Top") { cmux("workspace.action", workspace_id: w.id, action: "move_top") }
+    Button("Move Up") { cmux("workspace.action", workspace_id: w.id, action: "move_up") }
+    Button("Move Down") { cmux("workspace.action", workspace_id: w.id, action: "move_down") }
     Divider()
     Menu("Color") {
         colorItem(w, "Red", "#C0392B")
@@ -221,10 +215,10 @@ func menu(_ w) -> some View {
         colorItem(w, "Purple", "#8E44AD")
         colorItem(w, "Rose", "#E84393")
         Divider()
-        Button("Clear Color") { act(w, "clear_color") }
+        Button("Clear Color") { cmux("workspace.action", workspace_id: w.id, action: "clear_color") }
     }
     Divider()
-    Button("Close Other Workspaces") { act(w, "close_others") }
+    Button("Close Other Workspaces") { cmux("workspace.action", workspace_id: w.id, action: "close_others") }
     Button("Close Workspace") { cmux("workspace.close", workspace_id: w.id) }
     Divider()
     Menu(petName()) { petMenu(w) }
