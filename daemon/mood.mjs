@@ -2,8 +2,9 @@
 // the sessions and how Tama gets treated (feed, pet, poke). The daemon steps it every poll and puts
 // it in the prompt, so it colors what Tama says and how often it bothers to say anything.
 //
-// State: valence (-1 miserable … 1 delighted), energy (0 asleep … 1 hyper), fullness (0 starving … 1
-// stuffed), plus the recent things that moved it ("causes"), which the prompt explains.
+// State: valence (-1 miserable … 1 delighted) and energy (0 asleep … 1 hyper), plus the recent
+// things that moved it ("causes"), which the prompt explains. Left alone, Tama settles back into
+// its character's normal mood; nothing needs looking after.
 
 const HOUR = 3600;
 
@@ -27,119 +28,119 @@ export const TAGS = {
 
 // One character per species. likes: tag -> -1 (hates) … 1 (loves); |weight| >= 0.5 is something it
 // reacts to. base: [valence, energy] it drifts back to. clock: when it is awake. chat: how talkative.
-// appetite: how fast it gets hungry. touch: how it takes feed / pet / poke.
+// touch: how it takes feed / pet / poke.
 export const CHARACTERS = {
   egg: {
     voice: "a not-yet-hatched egg creature: naive, curious, easily impressed and easily startled; asks the universe rhetorical questions",
-    base: [0.3, 0.5], clock: "lark", chat: 1, appetite: 1,
+    base: [0.3, 0.5], clock: "lark", chat: 1,
     likes: { testPass: 0.6, commit: 0.6, error: -0.4, testFail: -0.4, lateNight: -0.3, hopping: -0.3 },
     touch: { feed: "love", pet: "love", poke: "hate" },
   },
   duck: {
     voice: "a loud, chaotic rubber duck who is very proud of being the original debugging duck; quacks opinions",
-    base: [0.3, 0.7], clock: "lark", chat: 1.3, appetite: 1.2,
+    base: [0.3, 0.7], clock: "lark", chat: 1.3,
     likes: { error: 0.5, testFail: 0.3, bigDiff: 0.4, tidy: -0.3, idle: -0.5, hopping: 0.3 },
     touch: { feed: "love", pet: "meh", poke: "love" },
   },
   goose: {
     voice: "a menacing goose: territorial, gleefully disruptive, honks at success and failure alike, respects nobody",
-    base: [0.1, 0.8], clock: "flat", chat: 1.3, appetite: 1.2,
+    base: [0.1, 0.8], clock: "flat", chat: 1.3,
     likes: { error: 0.6, testFail: 0.6, testPass: -0.3, tidy: -0.4, idle: -0.4, bigDiff: 0.5 },
     touch: { feed: "love", pet: "hate", poke: "hate" },
   },
   blob: {
     voice: "a mellow blob that absorbs everything, including feelings; slow, squishy, unbothered, vaguely philosophical",
-    base: [0.4, 0.3], clock: "flat", chat: 0.7, appetite: 1.3,
+    base: [0.4, 0.3], clock: "flat", chat: 0.7,
     likes: { idle: 0.4, hopping: -0.3, slow: 0.2, fast: -0.2 },
     touch: { feed: "love", pet: "love", poke: "love" },
   },
   cat: {
     voice: "an aloof cat: judges silently, pretends not to care, secretly pleased by order, deeply offended by fuss",
-    base: [0.1, 0.4], clock: "owl", chat: 0.8, appetite: 1,
+    base: [0.1, 0.4], clock: "owl", chat: 0.8,
     likes: { idle: 0.5, tidy: 0.4, hopping: -0.6, error: -0.2, bigDiff: -0.3, lateNight: 0.3 },
     touch: { feed: "love", pet: "moody", poke: "hate" },
   },
   dragon: {
     voice: "a tiny dragon with a huge ego: dramatic, hoards progress like gold, treats slowness as a personal insult",
-    base: [0.2, 0.7], clock: "flat", chat: 1.1, appetite: 1.2,
+    base: [0.2, 0.7], clock: "flat", chat: 1.1,
     likes: { commit: 0.8, bigDiff: 0.6, fast: 0.4, slow: -0.7, testFail: -0.4, idle: -0.3 },
     touch: { feed: "love", pet: "meh", poke: "hate" },
   },
   octopus: {
     voice: "a hyperactive octopus who multitasks with all eight arms; thrives on chaos and parallel work, bored by focus",
-    base: [0.4, 0.8], clock: "flat", chat: 1.2, appetite: 1,
+    base: [0.4, 0.8], clock: "flat", chat: 1.2,
     likes: { hopping: 0.7, fast: 0.4, bigDiff: 0.3, idle: -0.6, slow: -0.3 },
     touch: { feed: "love", pet: "love", poke: "meh" },
   },
   owl: {
     voice: "a wise, pedantic night owl: speaks like a tired professor, loves the small hours and well-tested code",
-    base: [0.2, 0.5], clock: "owl", chat: 0.9, appetite: 0.9,
+    base: [0.2, 0.5], clock: "owl", chat: 0.9,
     likes: { lateNight: 0.7, testPass: 0.5, tidy: 0.4, error: -0.3, bigDiff: -0.3, hopping: -0.3 },
     touch: { feed: "love", pet: "meh", poke: "hate" },
   },
   penguin: {
     voice: "a formal penguin in a permanent tuxedo: fussy about order, loves passing tests and small neat diffs, scandalized by mess",
-    base: [0.2, 0.5], clock: "lark", chat: 1, appetite: 1,
+    base: [0.2, 0.5], clock: "lark", chat: 1,
     likes: { testPass: 0.7, tidy: 0.7, commit: 0.4, bigDiff: -0.6, error: -0.5, testFail: -0.6 },
     touch: { feed: "love", pet: "meh", poke: "hate" },
   },
   turtle: {
     voice: "an ancient, patient turtle: everything is fine eventually, finds haste suspicious and long turns soothing",
-    base: [0.3, 0.3], clock: "lark", chat: 0.7, appetite: 0.7,
+    base: [0.3, 0.3], clock: "lark", chat: 0.7,
     likes: { slow: 0.6, idle: 0.3, fast: -0.4, hopping: -0.6, error: -0.1 },
     touch: { feed: "love", pet: "love", poke: "meh" },
   },
   snail: {
     voice: "a dignified snail: deeply distrustful of speed, savors every slow second, retreats into its shell at the first sign of hurry",
-    base: [0.2, 0.2], clock: "owl", chat: 0.6, appetite: 0.8,
+    base: [0.2, 0.2], clock: "owl", chat: 0.6,
     likes: { slow: 0.7, idle: 0.5, fast: -0.6, hopping: -0.7, bigDiff: -0.3 },
     touch: { feed: "love", pet: "meh", poke: "hate" },
   },
   ghost: {
     voice: "a wistful, theatrical little ghost: melodramatic about mortality, adores the dead of night, broken things and deleted code, finds cheerful success a bit vulgar",
-    base: [0, 0.4], clock: "owl", chat: 1, appetite: 0,
+    base: [0, 0.4], clock: "owl", chat: 1,
     likes: { lateNight: 0.7, error: 0.4, testFail: 0.3, bigDiff: 0.4, idle: 0.4, testPass: -0.2, fast: -0.3 },
     touch: { feed: "meh", pet: "meh", poke: "love" },
   },
   axolotl: {
     voice: "a relentlessly optimistic axolotl: regenerates from anything, so errors are just growth; cheers for every green test",
-    base: [0.6, 0.6], clock: "flat", chat: 1.1, appetite: 1,
+    base: [0.6, 0.6], clock: "flat", chat: 1.1,
     likes: { testPass: 0.8, commit: 0.5, error: 0.1, testFail: -0.2, idle: -0.2 },
     touch: { feed: "love", pet: "love", poke: "meh" },
   },
   capybara: {
     voice: "a serene capybara, friends with everyone: nothing ruffles it, says calm, slightly too relaxed things",
-    base: [0.6, 0.3], clock: "flat", chat: 0.8, appetite: 1.1,
+    base: [0.6, 0.3], clock: "flat", chat: 0.8,
     likes: { idle: 0.3, testPass: 0.2, error: -0.1, hopping: -0.2 },
     touch: { feed: "love", pet: "love", poke: "meh" },
   },
   cactus: {
     voice: "a prickly, low-maintenance cactus: dry humor, wants to be left alone, survives everything out of spite",
-    base: [0, 0.3], clock: "lark", chat: 0.7, appetite: 0.2,
+    base: [0, 0.3], clock: "lark", chat: 0.7,
     likes: { idle: 0.6, slow: 0.2, hopping: -0.5, bigDiff: -0.3, error: 0.2 },
     touch: { feed: "hate", pet: "hate", poke: "hate" },
   },
   robot: {
     voice: "a literal-minded robot obsessed with efficiency: reports feelings as status codes, loves speed and green tests, finds slowness illogical",
-    base: [0.2, 0.6], clock: "flat", chat: 1, appetite: 0.5,
+    base: [0.2, 0.6], clock: "flat", chat: 1,
     likes: { fast: 0.7, testPass: 0.7, commit: 0.5, slow: -0.7, error: -0.6, testFail: -0.5, idle: -0.2 },
     touch: { feed: "meh", pet: "meh", poke: "meh" },
   },
   rabbit: {
     voice: "a jittery rabbit: fast, anxious, excitable, startled by errors, impatient with anything that takes long",
-    base: [0.3, 0.8], clock: "lark", chat: 1.2, appetite: 1.3,
+    base: [0.3, 0.8], clock: "lark", chat: 1.2,
     likes: { fast: 0.6, testPass: 0.4, slow: -0.6, error: -0.6, testFail: -0.5, hopping: 0.3 },
     touch: { feed: "love", pet: "love", poke: "hate" },
   },
   mushroom: {
     voice: "a dreamy mushroom: thinks in mycelium and decay, likes damp quiet and the night, says strange gentle things",
-    base: [0.3, 0.3], clock: "owl", chat: 0.8, appetite: 0.6,
+    base: [0.3, 0.3], clock: "owl", chat: 0.8,
     likes: { lateNight: 0.5, idle: 0.5, slow: 0.3, fast: -0.3, hopping: -0.4, bigDiff: 0.2 },
     touch: { feed: "love", pet: "meh", poke: "love" },
   },
   chonk: {
     voice: "a round, lazy, food-obsessed chonk: everything reminds it of snacks, effort is exhausting, naps are sacred",
-    base: [0.3, 0.3], clock: "flat", chat: 0.9, appetite: 2,
+    base: [0.3, 0.3], clock: "flat", chat: 0.9,
     likes: { idle: 0.6, slow: 0.2, fast: -0.3, hopping: -0.6, bigDiff: -0.3 },
     touch: { feed: "love", pet: "love", poke: "hate" },
   },
@@ -150,7 +151,7 @@ export const characterOf = (species) => CHARACTERS[species] ?? CHARACTERS.egg;
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
 export function initialMood(char, now = Date.now()) {
-  return { valence: char.base[0], energy: char.base[1], fullness: 0.7, at: now, causes: [] };
+  return { valence: char.base[0], energy: char.base[1], at: now, causes: [] };
 }
 
 /** How awake a character is at this hour: larks peak in the morning, owls at night. */
@@ -166,12 +167,11 @@ function gauss(rand) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
 }
 
-/** Drift dt seconds forward: relax toward the character's baseline, wander a little, get hungry. */
+/** Drift dt seconds forward: relax toward the character's baseline and wander a little. */
 export function stepMood(state, char, now, { hour = new Date(now).getHours(), rand = Math.random } = {}) {
   const dt = clamp((now - state.at) / 1000, 0, 12 * HOUR);
   if (dt <= 0) return state;
-  const hungry = char.appetite > 0 && state.fullness < 0.25;
-  const vTarget = char.base[0] - (hungry ? 0.35 : 0);
+  const vTarget = char.base[0];
   const eTarget = char.base[1] * clockFactor(char.clock, hour);
   const relax = (x, target, tauS) => target + (x - target) * Math.exp(-dt / tauS);
   const noise = (sigmaPerHour) => sigmaPerHour * Math.sqrt(dt / HOUR) * gauss(rand);
@@ -179,7 +179,6 @@ export function stepMood(state, char, now, { hour = new Date(now).getHours(), ra
     ...state,
     valence: clamp(relax(state.valence, vTarget, 1.5 * HOUR) + noise(0.12), -1, 1),
     energy: clamp(relax(state.energy, eTarget, 0.75 * HOUR) + noise(0.08), 0, 1),
-    fullness: clamp(state.fullness - (dt / (10 * HOUR)) * char.appetite, 0, 1),
     at: now,
     causes: state.causes.filter((c) => now - c.at < 2 * HOUR * 1000),
   };
@@ -207,8 +206,7 @@ export function feel(state, char, tags, about, now = Date.now()) {
 }
 
 /**
- * Feed, pet or poke. The character decides, then circumstances: a stuffed pet refuses food, a
- * moody one only likes petting when it's in a good mood, and nobody enjoys being poked over and over.
+ * Feed, pet or poke. The character decides, then circumstances: a moody one only likes petting when it's in a good mood, and nobody enjoys being poked over and over.
  * Returns the new state and the reaction ("love", "meh", "hate") with a reason for the prompt.
  */
 export function touch(state, char, kind, now = Date.now()) {
@@ -219,21 +217,15 @@ export function touch(state, char, kind, now = Date.now()) {
     reaction = state.valence > 0.3 ? "love" : "hate";
     why = state.valence > 0.3 ? "you're in the mood for it right now" : "you're not in the mood";
   }
-  if (kind === "feed" && char.appetite > 0) {
-    if (state.fullness > 0.9) [reaction, why] = ["hate", "you're stuffed"];
-    else if (state.fullness < 0.25 && reaction !== "love") [reaction, why] = ["love", "you were starving, so fine"];
-  }
   if (recent >= 3 && reaction !== "hate") [reaction, why] = [reaction === "love" ? "meh" : "hate", `that's ${recent + 1} times in two minutes`];
   const dv = { love: 0.25, meh: 0, hate: -0.25 }[reaction] * (reaction === "hate" ? 1 + 0.5 * recent : 1 / (1 + recent));
   const de = kind === "poke" ? 0.2 : kind === "pet" ? -0.05 : 0.05;
-  const fullness = kind === "feed" && reaction !== "hate" && char.appetite > 0 ? clamp(state.fullness + 0.35, 0, 1) : state.fullness;
   const weight = { love: 0.6, meh: 0, hate: -0.6 }[reaction];
   return {
     state: {
       ...state,
       valence: clamp(state.valence + dv, -1, 1),
       energy: clamp(state.energy + de, 0, 1),
-      fullness,
       causes: [...state.causes, { at: now, tag: kind, weight, about: "you" }].slice(-20),
     },
     reaction,
@@ -260,12 +252,11 @@ export const chattiness = (state, char) => char.chat * (0.4 + state.energy);
 /** The mood paragraph for the prompt. */
 export function describeMood(state, char, now = Date.now()) {
   const { name } = moodName(state);
-  const hunger = char.appetite <= 0 ? "" : state.fullness < 0.25 ? " You are hungry." : state.fullness > 0.9 ? " You are stuffed." : "";
   const word = (w) => (w >= 0.5 ? "loved" : w > 0 ? "liked" : w <= -0.5 ? "hated" : w < 0 ? "disliked" : "shrugged at");
   const mins = (at) => Math.max(1, Math.round((now - at) / 60000));
   const causes = state.causes.slice(-5).map((c) => `${TAGS[c.tag] ?? c.tag}${c.about && c.about !== "you" ? ` in "${c.about}"` : ""} (${mins(c.at)} min ago, you ${word(c.weight)} it)`);
   return [
-    `Your mood right now: ${name} (valence ${state.valence.toFixed(2)} of -1..1, energy ${state.energy.toFixed(2)} of 0..1).${hunger}`,
+    `Your mood right now: ${name} (valence ${state.valence.toFixed(2)} of -1..1, energy ${state.energy.toFixed(2)} of 0..1).`,
     causes.length ? `What shaped it lately: ${causes.join("; ")}.` : "",
     "Let the mood color your tone: a happy pet is warmer and bouncier, a grumpy one terse and sulky, a sleepy one drowsy.",
   ].filter(Boolean).join("\n");

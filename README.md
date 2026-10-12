@@ -13,10 +13,12 @@ on its species' character and its current mood.
   │ starting to think it likes you.  │
   └──────────────────────────────────┘
       ╲
-           .----.   Tama
-          / °  ° \  grumpy ●●●○○
-          |      |  2m ago
-          ~`~``~`~
+                                  2m ago
+         ╲
+       .----.   Tama
+      / °  ° \
+      |      |
+      ~`~``~`~
 ```
 
 - **A global watcher.** Every finished Claude Code turn, in any workspace, may get a comment. It
@@ -31,12 +33,12 @@ on its species' character and its current mood.
 - **A character and a mood.** Every species has its own personality, likes and dislikes: the
   robot hates slow turns and loves green tests, the penguin is scandalized by giant diffs, the
   ghost adores failing things at 3 a.m., the snail distrusts speed. The mood drifts slowly on its
-  own, follows the time of day (larks and night owls), gets worse when Tama is hungry, and moves
-  with what happens in your sessions. It colors what Tama says and how often it bothers to talk;
+  own, follows the time of day (larks and night owls), and moves with what happens in your sessions. It colors what Tama says and how often it bothers to talk;
   things its character cares about strongly make a comment likelier.
-- **Feed, Pet, Poke.** Right-click Tama in the compiled sidebar. Each species takes them
+- **Feed, Pet, Poke.** Right-click Tama in the compiled sidebar. Nothing needs looking after: left
+  alone, Tama settles into its character's normal mood; these just nudge it. Each species takes them
   differently (a cactus hates all three, a cat only likes petting when it's in a good mood, nobody
-  likes being poked ten times in a row, and a stuffed pet refuses food), with a short animation
+  likes being poked ten times in a row), with a short animation
   and a reply.
 - **A full workspace sidebar.** Click a row to switch, drag to reorder, right-click for Rename,
   Pin, Mark as Read, Move, Color and Close.
@@ -136,9 +138,10 @@ with `defaultSpecies()` / `defaultName()` in `tamago.swift`.
 
 ## Mood
 
-The mood has three parts: valence (miserable to delighted), energy (asleep to hyper) and fullness.
+The mood has two parts: valence (miserable to delighted) and energy (asleep to hyper). It isn't
+shown as text; you see it in Tama's eyes and hear it in what Tama says.
 Each species' character in `daemon/mood.mjs` sets a baseline the mood drifts back to over an hour
-or two, when it's awake, how talkative it is, how fast it gets hungry (ghosts never do), what it
+or two, when it's awake, how talkative it is, what it
 likes and hates, and how it takes feed, pet and poke. Finished turns are tagged (tool errors,
 failing or passing tests, slow or quick turns, giant or tidy diffs, commits, late night) and the
 character feels the ones it cares about; so do hopping between sessions and long quiet stretches.

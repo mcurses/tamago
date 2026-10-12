@@ -168,6 +168,7 @@ struct PetFooter: View {
 
     static let spriteWidth: CGFloat = 84 // 12 monospaced characters at 11 pt, the widest species
     static let tagWidth: CGFloat = 96
+    static let gap: CGFloat = 8
 
     private func reacting(at now: Date) -> Bool {
         guard let at = model.daemon?.reaction?.at, at > 0 else { return false }
@@ -181,22 +182,19 @@ struct PetFooter: View {
             if let bubble = model.daemon?.bubble, bubble.at > 0 {
                 let age = seconds - bubble.at / 1000
                 if age < Pet.showSeconds {
-                    speech(bubble).opacity(age > Pet.showSeconds / 2 ? 0.5 : 1)
+                    speech(bubble, age: age).opacity(age > Pet.showSeconds / 2 ? 0.5 : 1)
                 }
             }
             // Sprite and name tag as one centered block of fixed size, so changing text (a longer
             // name, "just now" turning into "5m ago") never moves Tama.
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: Self.gap) {
                 sprite(pet, seconds: seconds)
                     .frame(width: Self.spriteWidth, alignment: .leading)
                 VStack(alignment: .leading, spacing: 1) {
                     nameField
-                    moodLine.frame(height: 12, alignment: .leading)
                     Group {
                         if !model.daemonOnline {
                             Text("asleep")
-                        } else if let at = model.daemon?.bubble.at, at > 0 {
-                            Text(ago(seconds - at / 1000))
                         } else {
                             Text(" ")
                         }
@@ -286,34 +284,6 @@ struct PetFooter: View {
 
     // MARK: name tag
 
-    @ViewBuilder private var moodLine: some View {
-        if let mood = model.daemon?.mood, model.daemonOnline {
-            HStack(spacing: 4) {
-                Text(mood.name).foregroundStyle(moodColor(mood.name))
-                if mood.eats {
-                    Text(fullnessPips(mood.fullness)).foregroundStyle(mood.hungry ? Color(hex: "#F7768E")! : .secondary)
-                        .help(mood.hungry ? "hungry" : "fullness")
-                }
-            }
-            .font(.system(size: 9, design: .monospaced))
-        }
-    }
-
-    private func moodColor(_ name: String) -> Color {
-        switch name {
-        case "ecstatic", "happy": Color(hex: "#9ECE6A")!
-        case "content": Color(hex: "#7DCFFF")!
-        case "grumpy", "restless": Color(hex: "#E0AF68")!
-        case "furious", "sulking": Color(hex: "#F7768E")!
-        default: Color.secondary
-        }
-    }
-
-    private func fullnessPips(_ f: Double) -> String {
-        let n = Int((f * 5).rounded())
-        return String(repeating: "●", count: n) + String(repeating: "○", count: 5 - n)
-    }
-
     private var name: String { model.daemon?.pet.name ?? "Tama" }
 
     @ViewBuilder private var nameField: some View {
@@ -337,7 +307,7 @@ struct PetFooter: View {
         }
     }
 
-    private func speech(_ bubble: DaemonState.Bubble) -> some View {
+    private func speech(_ bubble: DaemonState.Bubble, age: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("re: \(bubble.about)").font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
@@ -346,8 +316,14 @@ struct PetFooter: View {
             .padding(7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#8A8A8A")!, lineWidth: 1))
-            Text("╲").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(hex: "#8A8A8A")!)
-                .frame(maxWidth: .infinity) // the pet sits centered below
+            ZStack(alignment: .topTrailing) {
+                // The tail points down at the sprite, the left column of the centered block below.
+                Text("╲").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(hex: "#8A8A8A")!)
+                    .frame(maxWidth: .infinity)
+                    .offset(x: Self.spriteWidth / 2 - (Self.spriteWidth + Self.gap + Self.tagWidth) / 2 - 4)
+                // When it was said, like a message timestamp.
+                Text(ago(age)).font(.system(size: 9)).foregroundStyle(.tertiary).padding(.trailing, 4).padding(.top, 1)
+            }
         }
     }
 

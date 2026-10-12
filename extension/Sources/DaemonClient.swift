@@ -24,9 +24,6 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var eye: String // the sprite expression when Tama isn't talking
         var valence: Double
         var energy: Double
-        var fullness: Double
-        var hungry: Bool
-        var eats: Bool
     }
 
     /// The last feed / pet / poke and how Tama took it ("love", "meh", "hate").

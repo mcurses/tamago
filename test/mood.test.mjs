@@ -22,13 +22,11 @@ test("the mood drifts back to the character's baseline", () => {
   assert.ok(later.energy < 0.5, `energy ${later.energy}`);
 });
 
-test("pets get hungry, hunger makes them grumpier, ghosts never get hungry", () => {
+test("left alone, nothing needs looking after: the mood just settles", () => {
   const chonk = CHARACTERS.chonk;
-  const hungry = stepMood(initialMood(chonk, 0), chonk, 8 * H, still);
-  assert.ok(hungry.fullness < 0.25);
-  assert.ok(stepMood(hungry, chonk, 14 * H, still).valence < chonk.base[0] - 0.2);
-  const ghost = CHARACTERS.ghost;
-  assert.equal(stepMood(initialMood(ghost, 0), ghost, 12 * H, still).fullness, 0.7);
+  const later = stepMood(initialMood(chonk, 0), chonk, 48 * H, still);
+  assert.ok(Math.abs(later.valence - chonk.base[0]) < 0.1, `valence ${later.valence}`);
+  assert.equal("fullness" in later, false);
 });
 
 test("loved things wear off when repeated, hated things add up", () => {
@@ -56,7 +54,7 @@ test("feel ignores tags the character doesn't care about and reports what it fel
   assert.deepEqual(felt, [{ tag: "fast", weight: 0.7 }]);
 });
 
-test("touch: species taste, moody cats, stuffed pets, spam", () => {
+test("touch: species taste, moody cats, spam", () => {
   const goose = CHARACTERS.goose;
   assert.equal(touch(initialMood(goose, 0), goose, "pet", 0).reaction, "hate");
   assert.equal(touch(initialMood(goose, 0), goose, "feed", 0).reaction, "love");
@@ -66,10 +64,10 @@ test("touch: species taste, moody cats, stuffed pets, spam", () => {
   assert.equal(touch({ ...initialMood(cat, 0), valence: -0.2 }, cat, "pet", 0).reaction, "hate");
 
   const chonk = CHARACTERS.chonk;
-  const stuffed = touch({ ...initialMood(chonk, 0), fullness: 0.95 }, chonk, "feed", 0);
-  assert.equal(stuffed.reaction, "hate");
-  assert.equal(stuffed.state.fullness, 0.95);
-  assert.ok(touch({ ...initialMood(chonk, 0), fullness: 0.3 }, chonk, "feed", 0).state.fullness > 0.6);
+  const fed = touch(initialMood(chonk, 0), chonk, "feed", 0);
+  assert.equal(fed.reaction, "love");
+  assert.ok(fed.state.valence > chonk.base[0]);
+  assert.equal(touch(initialMood(CHARACTERS.cactus, 0), CHARACTERS.cactus, "feed", 0).reaction, "hate");
 
   const blob = CHARACTERS.blob;
   let s = initialMood(blob, 0);

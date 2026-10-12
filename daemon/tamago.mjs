@@ -699,7 +699,7 @@ if (args[0] === "--peek") {
 
 if (args[0] === "--mood") {
   const m = currentMood();
-  console.log(`${petName()} the ${chosenSpecies()} is ${moodName(m).name} (valence ${m.valence.toFixed(2)}, energy ${m.energy.toFixed(2)}, fullness ${m.fullness.toFixed(2)})`);
+  console.log(`${petName()} the ${chosenSpecies()} is ${moodName(m).name} (valence ${m.valence.toFixed(2)}, energy ${m.energy.toFixed(2)})`);
   console.log(describeMood(m, character()));
   console.log(describeTastes(character()));
   process.exit(0);
@@ -761,12 +761,11 @@ function sidebarState() {
   for (const w of latestSnap?.workspaces ?? []) workspaces[w.id] = { color: w.custom_color ?? null, description: w.description ?? null };
   const m = currentMood();
   const { name, eye } = moodName(m);
-  const hungry = character().appetite > 0 && m.fullness < 0.25;
   return {
     pet: { species: chosenSpecies(), name: petName() },
     bubble,
     // Rounded: the mood drifts every poll, and the sidebar redraws (closing open menus) on every change.
-    mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy), fullness: round1(m.fullness), hungry, eats: character().appetite > 0 },
+    mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy) },
     reaction,
     workspaces,
   };
