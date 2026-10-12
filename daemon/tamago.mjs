@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
+import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace } from "./details.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
@@ -380,6 +381,7 @@ function watchAgentEvents() {
       if (t) sessions.set(wsId, t);
     }
     lastActivityAt = Date.now();
+    queueDetails(wsId); // the agent status pill changed
     if (ev.name === "agent.hook.Stop") onTurnEnd(wsId).catch((err) => log("turn handling failed:", err.message));
   });
   child.on("exit", (code) => {
@@ -757,9 +759,79 @@ const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
 
 const round1 = (x) => Math.round(x * 10) / 10;
 
+// What the stock sidebar shows per workspace (daemon/details.mjs). Status pills, progress and logs
+// need one `cmux sidebar-state` per workspace, so they're re-read when cmux reports a change for
+// that workspace, plus a sweep once a minute (while the compiled sidebar is in use) in case an
+// event was missed.
+const details = new Map(); // workspace id -> { statuses, progress, logs }
+const detailsQueue = new Set();
+let detailsTimer = null;
+let sidebarSettings = resolveSettings("", readCmuxJson());
+
+async function refreshDetails(id) {
+  try {
+    details.set(id, parseSidebarState(await cmux("sidebar-state", "--workspace", id)));
+  } catch {
+    details.delete(id);
+  }
+}
+
+function queueDetails(id) {
+  if (!id) return;
+  detailsQueue.add(id);
+  detailsTimer ??= setTimeout(async () => {
+    const ids = [...detailsQueue];
+    detailsQueue.clear();
+    for (const i of ids) await refreshDetails(i);
+    detailsTimer = null;
+  }, 300);
+}
+
+let stateReadAt = 0; // when the compiled sidebar last asked; no sidebar, no sweeping
+
+async function sweepDetails() {
+  if (Date.now() - stateReadAt > 60_000) return;
+  const ids = (latestSnap?.workspaces ?? []).map((w) => w.id);
+  for (const id of ids) await refreshDetails(id);
+  for (const id of details.keys()) if (!ids.includes(id)) details.delete(id);
+}
+
+async function refreshSettings() {
+  try {
+    const { stdout } = await run("defaults", ["export", "com.cmuxterm.app", "-"], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 });
+    sidebarSettings = resolveSettings(stdout, readCmuxJson());
+  } catch (err) {
+    log("reading cmux settings failed:", err.message?.split("\n")[0]);
+  }
+}
+
+function watchSidebarEvents() {
+  const child = spawn(CMUX, ["events", "--reconnect", "--no-heartbeat", "--no-ack", "--category", "sidebar"]);
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    try {
+      queueDetails(eventWorkspace(JSON.parse(line)));
+    } catch {}
+  });
+  child.on("exit", (code) => {
+    log("sidebar event stream exited", code, "- restarting in 10s");
+    setTimeout(watchSidebarEvents, 10_000);
+  });
+}
+
+// Markers the interpreted sidebar's menus leave in descriptions for a moment; not worth showing.
+const shownDescription = (d) => (d && !d.startsWith(MARKER_PREFIX) ? d : null);
+
 function sidebarState() {
+  stateReadAt = Date.now();
   const workspaces = {};
-  for (const w of latestSnap?.workspaces ?? []) workspaces[w.id] = { color: w.custom_color ?? null, description: w.description ?? null };
+  for (const w of latestSnap?.workspaces ?? []) {
+    workspaces[w.id] = {
+      color: w.custom_color ?? null,
+      description: shownDescription(w.description),
+      ...snapshotDetails(w),
+      ...(details.get(w.id) ?? { statuses: [], progress: null, logs: [] }),
+    };
+  }
   const m = currentMood();
   const { name, eye } = moodName(m);
   return {
@@ -768,6 +840,7 @@ function sidebarState() {
     // Rounded: the mood drifts every poll, and the sidebar redraws (closing open menus) on every change.
     mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy) },
     reaction,
+    settings: sidebarSettings,
     workspaces,
   };
 }
@@ -831,15 +904,27 @@ async function sidebarAction(a) {
     const name = clean(a.name ?? "").slice(0, 24);
     if (name) writePet({ name });
     await paint();
+  } else if (a.type === "open-url") {
+    // Port and pull request links: in cmux's browser or the default one, as cmux's settings say.
+    const url = new URL(String(a.url));
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error(`refusing to open ${url.protocol} links`);
+    const inCmux = a.via === "port" ? sidebarSettings.openPortLinksInCmuxBrowser : sidebarSettings.openPullRequestLinksInCmuxBrowser;
+    if (inCmux) await cmux("browser", "open", url.href, ...(a.workspace ? ["--workspace", ws(a.workspace)] : []));
+    else await run("open", [url.href]);
   } else if (a.type === "touch") {
     if (!["feed", "pet", "poke"].includes(a.kind)) throw new Error(`unknown touch ${a.kind}`);
     await onTouch(a.kind);
   } else throw new Error(`unknown action ${a.type}`);
-  log("sidebar action", a.type, a.workspace ?? a.species ?? a.name ?? a.kind ?? "");
+  log("sidebar action", a.type, a.workspace ?? a.species ?? a.name ?? a.kind ?? a.url ?? "");
   latestSnap = await snapshot().catch(() => latestSnap);
 }
 
 if (!DRY && fs.existsSync(TOKEN_FILE)) {
+  await refreshSettings();
+  setInterval(refreshSettings, 10_000);
+  watchSidebarEvents();
+  setTimeout(() => sweepDetails().catch(() => {}), 5000);
+  setInterval(() => sweepDetails().catch(() => {}), 60_000);
   startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
 }
 
