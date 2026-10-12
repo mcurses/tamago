@@ -1,0 +1,142 @@
+// Tamago: cmux custom sidebar = workspace list + a pinned ASCII pet.
+// The pet's comments arrive from daemon/tamago.mjs through the selected workspace's
+// progress label, encoded as "tamago|<epoch>|<mood>|<text>".
+
+// Knobs. The sidebar host gives no height, so the pinned footer needs it spelled out.
+func sidebarHeight() -> Int { return 1040 }
+func footerHeight() -> Int { return 210 }
+func bubbleWidth() -> Int { return 200 }
+func petName() -> String { return "Tama" }
+func showSeconds() -> Int { return 1200 }
+func talkSeconds() -> Int { return 6 }
+
+func tamaLabel() -> String {
+    // Note: `obj != nil` on a missing object is not reliably true/false in this interpreter;
+    // member access on a missing value falls through to an empty result instead.
+    let sel = workspaces.filter { $0.selected }
+    if sel.count == 0 { return "" }
+    let label = "\(sel[0].progress.label)"
+    return label.hasPrefix("tamago|") ? label : ""
+}
+
+func tamaPart(_ i) -> String {
+    let label = tamaLabel()
+    if label == "" { return "" }
+    let parts = label.split(separator: "|")
+    if parts.count <= i { return "" }
+    return parts[i]
+}
+
+func tamaAge() -> Int {
+    let at = tamaPart(1)
+    if at == "" { return 999999 }
+    return clock.epoch - Int(at)
+}
+
+func hasComment() -> Bool { return tamaAge() < showSeconds() }
+func talking() -> Bool { return tamaAge() < talkSeconds() }
+func mood() -> String { return hasComment() ? tamaPart(2) : "idle" }
+
+func eyes(_ t) -> String {
+    let m = mood()
+    if m == "sleepy" { return "-  -" }
+    if t % 9 == 8 { return "-  -" }
+    if m == "shock" { return "O  O" }
+    if m == "happy" { return "^  ^" }
+    if m == "smug" { return "¬  ¬" }
+    if m == "sad" { return "T  T" }
+    return "°  °"
+}
+
+func mouth(_ t) -> String {
+    if talking() { return t % 2 == 0 ? "o " : "- " }
+    let m = mood()
+    if m == "shock" { return "O " }
+    if m == "sad" { return "n " }
+    if m == "sleepy" { return "~ " }
+    return "ω "
+}
+
+func bob(_ t) -> String { return t % 4 == 1 ? " " : "" }
+
+func sprite(_ t) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+        Text(bob(t) + (mood() == "sleepy" ? "   .--. z " : "   .--.   ")).monospaced()
+        Text(bob(t) + "  /    \  ").monospaced()
+        Text(bob(t) + " | " + eyes(t) + " | ").monospaced()
+        Text(bob(t) + " |  " + mouth(t) + "  | ").monospaced()
+        Text(bob(t) + "  \____/  ").monospaced()
+        Text(t % 2 == 0 ? "   ^  ^   " : "   ^   ^  ").monospaced()
+    }
+    .font(.system(size: 11, design: .monospaced))
+}
+
+func agoLabel(_ secs) -> String {
+    if secs < 60 { return "just now" }
+    if secs < 3600 { return "\(secs / 60)m ago" }
+    return "\(secs / 3600)h ago"
+}
+
+func row(_ w) -> some View {
+    Button(action: { cmux("workspace.select", workspace_id: w.id) }) {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(w.title).font(.system(size: 12)).fontWeight(w.selected ? .semibold : .regular).lineLimit(1).truncationMode(.tail)
+                if w.branch != nil && w.branch != "" {
+                    Text(w.branch).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary).lineLimit(1)
+                }
+            }
+            Spacer()
+            if w.unread > 0 {
+                Text("\(w.unread)").font(.system(size: 9, design: .monospaced)).bold()
+                    .foregroundColor("#FFFFFF")
+                    .padding(4)
+                    .background { Circle().foregroundColor("accent") }
+            }
+        }
+        .padding(6)
+        .background { RoundedRectangle(cornerRadius: 6).foregroundColor(w.selected ? "accent" : "#000000").opacity(w.selected ? 0.25 : 0.0) }
+    }
+}
+
+VStack(alignment: .leading, spacing: 0) {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(workspaces) { w in
+                row(w)
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, minHeight: sidebarHeight() - footerHeight(), alignment: .topLeading)
+    }
+    .frame(height: sidebarHeight() - footerHeight(), alignment: .top)
+
+    Divider()
+
+    VStack(alignment: .leading, spacing: 4) {
+        Spacer()
+        if hasComment() {
+            Text(tamaPart(3))
+                .font(.system(size: 11))
+                .lineLimit(5)
+                .frame(width: bubbleWidth(), alignment: .leading)
+                .padding(7)
+                .background { RoundedRectangle(cornerRadius: 8).stroke("#8A8A8A", lineWidth: 1) }
+                .opacity(tamaAge() > showSeconds() / 2 ? 0.5 : 1.0)
+            Text("     ╲").font(.system(size: 11, design: .monospaced)).foregroundColor("#8A8A8A")
+        }
+        HStack(alignment: .bottom, spacing: 8) {
+            sprite(clock.second)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(petName()).font(.system(size: 12)).bold()
+                Text("★ lv 1").font(.system(size: 9, design: .monospaced)).foregroundColor("#E0AF68")
+                if hasComment() {
+                    Text(agoLabel(tamaAge())).font(.system(size: 9)).foregroundColor(.tertiary)
+                }
+            }
+            Spacer()
+        }
+    }
+    .padding(8)
+    .frame(height: footerHeight(), alignment: .bottom)
+}
