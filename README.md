@@ -35,6 +35,11 @@ on its species' character and its current mood.
   ghost adores failing things at 3 a.m., the snail distrusts speed. The mood drifts slowly on its
   own, follows the time of day (larks and night owls), and moves with what happens in your sessions. It colors what Tama says and how often it bothers to talk;
   things its character cares about strongly make a comment likelier.
+- **Actions.** Now and then (about a third of the comments) Tama also does something, like
+  `*rattles spines at the sidebar*` or `*shuffles roots deeper, pot creaking under protest*`. The
+  daemon decides when; the action is made up fresh each time from what the species has to act
+  with (spines and pot for the cactus, sheet and chains for the ghost). `TAMAGO_ACTION_CHANCE`
+  changes how often.
 - **Feed, Pet, Poke.** Right-click Tama in the compiled sidebar. Nothing needs looking after: left
   alone, Tama settles into its character's normal mood; these just nudge it. Each species takes them
   differently (a cactus hates all three, a cat only likes petting when it's in a good mood, nobody

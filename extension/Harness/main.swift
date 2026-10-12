@@ -38,7 +38,7 @@ func state(_ s: Scenario, reactionAt: Double) -> DaemonState {
     let eye = ["happy": "happy", "content": "smug", "grumpy": "grumpy", "furious": "sad"][s.mood] ?? "idle"
     let json: [String: Any] = [
         "pet": ["species": s.species, "name": s.name],
-        "bubble": ["at": s.bubble == nil && s.bubbleAge == nil ? 0 : reactionAt - (s.bubbleAge ?? 30) * 1000, "mood": "smug", "about": "rev1", "text": s.bubble ?? "-"],
+        "bubble": ["at": s.bubble == nil && s.bubbleAge == nil ? 0 : reactionAt - (s.bubbleAge ?? 30) * 1000, "mood": "smug", "about": "rev1", "text": s.bubble ?? "-", "action": s.bubble == nil ? NSNull() : "spines bristle at the red tests" as Any],
         "mood": ["name": s.mood, "eye": eye, "valence": 0, "energy": 0.5],
         "reaction": ["kind": s.kind, "response": s.response, "at": s.kind == "-" ? 0 : reactionAt],
         "workspaces": [String: Any](),

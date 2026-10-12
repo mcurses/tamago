@@ -88,7 +88,7 @@ function clean(text) {
 let carrier = null;
 // The bubble survives restarts on disk; the label itself is cleared when the daemon stops.
 const BUBBLE_FILE = path.join(STATE_DIR, "bubble.json");
-let bubble = { at: 0, mood: "idle", about: "-", text: "-", ...readJson(BUBBLE_FILE) };
+let bubble = { at: 0, mood: "idle", about: "-", text: "-", action: null, ...readJson(BUBBLE_FILE) };
 let painted = null; // species + name last written, to repaint when either changes
 
 const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -110,7 +110,7 @@ function petName() {
 const SPECIES = ["egg", ...Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, "sidebar/species.json"), "utf8")).species)];
 
 function chosenSpecies() {
-  const s = readPet().species;
+  const s = process.env.TAMAGO_SPECIES ?? readPet().species; // the env override is for trying a species out with --peek
   return SPECIES.includes(s) ? s : "egg";
 }
 
@@ -161,7 +161,8 @@ const isOurs = (progress) => progress === "none" || progress.includes("tamago|")
 /** Write the bubble label, moving it to a free workspace if the preferred one shows real progress. */
 async function paint(preferId) {
   const pet = `${chosenSpecies()}|${petName()}`;
-  const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${bubble.text}|${pet}`;
+  const text = bubble.action ? clean(`*${bubble.action}* ${bubble.text}`) : bubble.text; // the interpreted sidebar has one text field
+  const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${text}|${pet}`;
   if (DRY) {
     log("dry-run paint", label);
     return true;
@@ -189,17 +190,18 @@ async function paint(preferId) {
   return true;
 }
 
-async function say(about, mood, text) {
+async function say(about, mood, text, action = null) {
   // Empty fields would vanish when the sidebar splits the label and shift the rest, hence "-".
   bubble = {
     at: Date.now(),
     mood: MOODS.includes(mood) ? mood : "idle",
     about: clean(about.title).slice(0, 40) || "-",
     text: clean(text) || "-",
+    action: action ? clean(action).replace(/^\*+|\*+$/g, "").slice(0, 40) || null : null,
   };
   if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
   const ok = await paint(about.id);
-  if (ok) log("say", about.title, carrier === about.id ? "" : `(carried by ${carrier})`, JSON.stringify(bubble.text));
+  if (ok) log("say", about.title, carrier === about.id ? "" : `(carried by ${carrier})`, bubble.action ? `*${bubble.action}*` : "", JSON.stringify(bubble.text));
   return ok;
 }
 
@@ -237,7 +239,11 @@ callback or running gag is welcome when it fits, but never repeat a line, a joke
 opening phrase. If an idea or image is already in your diary (napping, waiting, "not impressed"),
 pick a different angle. Vary sentence shape and length. Silence between comments is normal; don't mention it.
 Write in ${LANG}. Max 90 characters. No quotes, no emoji, no hashtags.
-Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "text": "..."}`;
+Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "..."}
+"action" is a tiny stage direction of something you physically do, 2 to 6 words, third person,
+no asterisks, no name, no "you". Use your body: ${character().body}. Invent it fresh for this
+moment and mood, never a stock gesture and never one from your diary. Only include one when the
+prompt says so.`;
 
 // Tama's diary: everything it said, with when and about what, kept across restarts so it can
 // follow up on itself instead of starting from zero (and stop recycling the same jokes).
@@ -270,17 +276,25 @@ function diary() {
   const shown = history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS).slice(-HISTORY_SHOWN);
   if (!shown.length) return "";
   const when = (at) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  const lines = shown.map((h) => `- ${when(h.at)} (${ago(Date.now() - h.at)}), ${h.kind} in "${h.about}", ${h.mood}: ${h.text}`);
+  const lines = shown.map((h) => `- ${when(h.at)} (${ago(Date.now() - h.at)}), ${h.kind} in "${h.about}", ${h.mood}: ${h.action ? `*${h.action}* ` : ""}${h.text}`);
   return `Your diary, what you said lately (oldest first):\n${lines.join("\n")}`;
 }
 
+// Now and then Tama also does something, like *bristles its spines*. The daemon decides when, so
+// it stays occasional; touches get one more often, since they're physical anyway.
+const ACTION_CHANCE = Number(process.env.TAMAGO_ACTION_CHANCE ?? 0.3);
+
 async function brain(event) {
+  const act = Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
     describeMood(currentMood(), character()),
     diary(),
     `Local time: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+    act
+      ? "This time, include an action that fits the moment and your mood (not one from your diary)."
+      : 'This time, no action: "action": null.',
   ].filter(Boolean).join("\n");
   try {
     const { stdout } = await run(CLAUDE, [
@@ -291,7 +305,7 @@ async function brain(event) {
     const json = stdout.slice(stdout.indexOf("{"), stdout.lastIndexOf("}") + 1);
     const out = JSON.parse(json);
     if (!out.text) throw new Error("empty text");
-    return { mood: out.mood, text: clean(out.text) };
+    return { mood: out.mood, text: clean(out.text), action: act && out.action ? clean(out.action) : null };
   } catch (err) {
     log("brain failed, using canned line:", err.message?.split("\n")[0]);
     return canned(event.kind);
@@ -665,10 +679,10 @@ async function tick() {
   busy = true;
   try {
     log("event", event.kind, event.w.title);
-    const { mood, text } = await brain(event);
-    if (await say(event.w, mood, text)) {
+    const { mood, text, action } = await brain(event);
+    if (await say(event.w, mood, text, action)) {
       lastSpokeAt = Date.now();
-      remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text });
+      remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text, action });
     }
   } catch (err) {
     log("tick failed:", err.message?.split("\n")[0]);
@@ -900,10 +914,10 @@ async function onTouch(kind) {
   busy = true;
   (async () => {
     try {
-      const { mood: face, text } = await brain(event);
-      if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text)) {
+      const { mood: face, text, action } = await brain(event);
+      if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action)) {
         lastSpokeAt = Date.now();
-        remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text });
+        remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });
       }
     } catch (err) {
       log("touch reply failed:", err.message?.split("\n")[0]);

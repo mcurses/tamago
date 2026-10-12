@@ -12,6 +12,7 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var mood: String
         var about: String
         var text: String
+        var action: String? // a stage direction like "bristles its spines", now and then
     }
 
     /// Per-workspace details the stock sidebar shows (daemon/details.mjs). Optional, so an older

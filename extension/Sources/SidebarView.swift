@@ -489,6 +489,9 @@ struct PetFooter: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("re: \(bubble.about)").font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                if let action = bubble.action, !action.isEmpty {
+                    Text(verbatim: "*\(action)*").font(.system(size: 10).italic()).foregroundStyle(.secondary).lineLimit(2)
+                }
                 Text(bubble.text).font(.system(size: 11)).lineLimit(5).fixedSize(horizontal: false, vertical: true)
             }
             .padding(7)
