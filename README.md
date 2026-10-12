@@ -1,54 +1,178 @@
 # Tamago
 
-A tiny ASCII pet ("Tama") pinned to the bottom of the cmux left sidebar. It watches all your
-sessions and now and then makes a snarky, deliberately unhelpful one-liner about one of them, no
-matter which workspace is open.
+A tiny ASCII pet for the [cmux](https://cmux.com) terminal, in the spirit of the Claude Code
+`/buddy` April Fools companion. It lives at the bottom of cmux's left sidebar, under your workspace
+list. It watches all your coding-agent sessions and now and then makes a snarky, cute,
+deliberately unhelpful one-liner about one of them, no matter which workspace is open.
 
-- `sidebar/tamago.swift`: cmux custom sidebar (workspace list + pinned pet). Symlinked into
-  `~/.config/cmux/sidebars/`, hot-reloads on save.
-- `daemon/tamago.mjs`: follows `cmux events` (agent hook events) and the sidebar snapshot. When a
-  coding-agent turn ends in any workspace it maybe (35%, 70% if the turn had errors, failing tests
-  or a big diff) comments 20-90 s later, using a digest of the Claude transcript
-  (`daemon/transcript.mjs`) plus a log of recent turns in other workspaces. If several sessions
-  finish close together it picks the most interesting turn; one cooldown covers all sessions. Also
-  reacts to tab hopping, dwelling on a workspace and long idle stretches. Lines come from Haiku via
-  `claude -p`. There is one global bubble: a single progress label
-  `tamago|<epoch>|<mood>|<about>|<text>` on one workspace (the one it is about, or a free one if
-  that shows real progress), which the sidebar finds wherever it is and shows as "re: <about>".
-- Species and name: right-click Tama (or any workspace row → Tama) to rename it or pick one of the
-  18 Claude Code `/buddy` species (or the default egg), or run
-  `node daemon/tamago.mjs --name <name>` / `--species <name>`. The art is vendored in
-  `sidebar/species.json` from the MIT-licensed clone
-  [ramarivera/coding-buddy](https://github.com/ramarivera/coding-buddy) and baked into
-  `tamago.swift` by `node scripts/gen-species.mjs`. Both live in
-  `~/.local/state/tamago/pet.json`; the daemon adds them to the label as the sixth and seventh
-  field, so with the daemon stopped the sidebar shows `defaultSpecies()` / `defaultName()`.
-- Rename: sidebars have no text input in 0.64.22, so the menu item sets the description to a
-  marker and the daemon shows a native dialog. Without the daemon, Rename does nothing.
-
-```sh
-./scripts/install.sh               # from a cmux terminal
-node daemon/tamago.mjs --say "hi" happy   # push one comment by hand
-node daemon/tamago.mjs --peek --brain     # show Tama's context for the open workspace + a sample line
-TAMAGO_DELAY_S=2-4 TAMAGO_CHANCE=1 node daemon/tamago.mjs --dry-run   # fast, log-only test run
-tail -f ~/.local/state/tamago/tamago.log
-./scripts/uninstall.sh
+```
+  ┌──────────────────────────────────┐
+  │ re: api-server                   │
+  │ Third red test run in a row. I'm │
+  │ starting to think it likes you.  │
+  └──────────────────────────────────┘
+      ╲
+     .----.          Tama
+    / °  ° \         ★ lv 1
+    |      |         2m ago
+    ~`~``~`~
 ```
 
-## cmux constraints found (0.64.22)
+- **A global watcher.** Every finished Claude Code turn, in any workspace, may get a comment. It
+  comes a bit later and only sometimes, not as an instant reply. Comments use a digest of the
+  session transcript: what you asked, what the agent said, the tools it used, errors, failing tests
+  and diff size. They also see what happened in your other sessions recently.
+- **A memory.** Tama keeps a diary of what it said, so it can follow up on itself instead of
+  repeating the same jokes.
+- **19 looks.** The default egg, plus the 18 original `/buddy` species: duck, goose, blob, cat,
+  dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot, rabbit,
+  mushroom and chonk. Each is animated, and its eyes show its mood.
+- **A full workspace sidebar.** Click a row to switch, drag to reorder, right-click for Rename,
+  Pin, Mark as Read, Move, Color and Close.
 
-- Custom sidebars can't touch files, network or timers; comments must come in via cmux data.
-  Writable channels that reach the sidebar: `set-progress --label`, workspace description.
-  `set-status` does not.
-- The root view sits in a vertical scroll view, so `Spacer`/`safeAreaInset` can't pin a footer.
-  Heights are explicit knobs at the top of `tamago.swift` (`sidebarHeight`, `footerHeight`).
-- `\n`, `\\` and `\"` in string literals are not unescaped (raw strings `#"…"#` work); `obj != nil` is unreliable, use
-  interpolation (`"\(w.progress.label)"`) to tolerate missing values.
+## Requirements
+
+- macOS with [cmux](https://cmux.com) installed in `/Applications`. Developed against cmux
+  0.64.22.
+- Node.js 18 or newer (`node` on your PATH).
+- The [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, logged in. Tama writes its
+  lines with `claude -p --model haiku`, so they count against your Claude usage, a little. Its
+  context (excerpts of your session transcripts) goes to Anthropic like any other Claude Code
+  request.
+- Claude Code running inside cmux with cmux's agent hooks, which is cmux's default. Tama learns
+  about finished turns from them.
+
+## Setup
+
+1. **Clone and install.** Run this from a terminal inside cmux; the cmux socket only accepts
+   processes started in a cmux terminal.
+
+   ```sh
+   git clone https://github.com/mcurses/tamago.git ~/code/tamago
+   ~/code/tamago/scripts/install.sh
+   ```
+
+   This symlinks `sidebar/tamago.swift` into `~/.config/cmux/sidebars/`, selects it as the left
+   sidebar, and starts the daemon in the background.
+
+2. **Start it automatically.** cmux reopens its terminals when it launches, so a line in
+   `~/.zshrc` brings Tama back after every cmux restart. If Tama is already running, the line
+   does nothing.
+
+   ```sh
+   echo '[[ -n "$CMUX_SOCKET_PATH" ]] && ~/code/tamago/scripts/ensure-running.sh 2>/dev/null' >> ~/.zshrc
+   ```
+
+   Without it, start Tama by hand after a restart with `~/code/tamago/scripts/ensure-running.sh`.
+   Rename in the sidebar menus needs the daemon too (see below).
+
+3. **Fit the sidebar to your screen.** cmux wraps custom sidebars in a scroll view, so the footer
+   is pinned with an explicit height. Open `sidebar/tamago.swift` and set `windowHeight()` to your
+   cmux window's height in points. The default, 1084, is a full-height window on a 14" MacBook
+   Pro. If the whole sidebar scrolls, lower the number; if there's a gap under Tama, raise it.
+   The sidebar hot-reloads when you save.
+
+To switch back to the stock sidebar, right-click cmux's sidebar toggle button. To remove Tamago
+completely, run `scripts/uninstall.sh` and delete the line from `~/.zshrc`.
+
+## Choosing a species and a name
+
+Right-click Tama, or right-click any workspace row and open the submenu at the bottom named after your pet:
+
+- **Species** → pick one; the sidebar updates within a few seconds.
+- **Rename Tama…** → type a new name in the dialog.
+
+Or from a terminal:
+
+```sh
+node ~/code/tamago/daemon/tamago.mjs --species        # list species and show the current one
+node ~/code/tamago/daemon/tamago.mjs --species capybara
+node ~/code/tamago/daemon/tamago.mjs --name Pip
+```
+
+The choice is stored in `~/.local/state/tamago/pet.json`. The daemon passes it to the sidebar, so
+while the daemon isn't running the sidebar shows the egg named Tama. You can change that fallback
+with `defaultSpecies()` / `defaultName()` in `tamago.swift`.
+
+## Settings
+
+Environment variables for the daemon. Set them in the shell that starts it, for example in front
+of `ensure-running.sh` in your `~/.zshrc` line.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TAMAGO_LANG` | `English` | Language Tama speaks |
+| `TAMAGO_CHANCE` | `0.35` | Chance to comment on a finished turn (at least 0.7 for turns with errors, failing tests or a big diff) |
+| `TAMAGO_DELAY_S` | `20-90` | Seconds between a turn ending and the comment |
+| `TAMAGO_COOLDOWN_S` | `150` | Minimum quiet time between comments, across all sessions |
+| `TAMAGO_POLL_MS` | `3000` | How often the daemon looks at cmux |
+| `TAMAGO_NAME` | `Tama` | Name used until you pick one |
+| `TAMAGO_CLAUDE` | auto | Path to the real `claude` binary. Use the real binary, not cmux's wrapper, which would log Tama's calls as workspace prompts. |
+
+At the top of `sidebar/tamago.swift` you can also change `footerHeight()`, `bubbleWidth()`, how
+long a comment stays (`showSeconds()`, default 20 minutes) and how long Tama "talks"
+(`talkSeconds()`).
+
+## Useful commands
+
+```sh
+tail -f ~/.local/state/tamago/tamago.log                  # what Tama notices and says
+node daemon/tamago.mjs --peek --brain                     # Tama's context for the open workspace, plus a sample line
+node daemon/tamago.mjs --say "hello" happy                # push a comment by hand
+TAMAGO_DELAY_S=2-4 TAMAGO_CHANCE=1 node daemon/tamago.mjs --dry-run   # log-only test run
+```
+
+Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`, the diary
+(`history.jsonl`) and saved workspace descriptions.
+
+## Troubleshooting
+
+- **Tama never says anything.** Check the log first. `Access denied - only processes started
+  inside cmux` means the daemon was started outside a cmux terminal; start it again from a cmux
+  terminal. Also check that a finished Claude turn shows up as `turn ended in …` in the log. If it
+  doesn't, cmux's agent hooks aren't active for that session.
+- **Rename or a species pick does nothing.** Those menu items write a short marker into a
+  workspace description, and the daemon picks it up. The sidebar has no text input of its own.
+  With the daemon stopped they wait until it's back.
+- **The sidebar scrolls, or there's a gap under Tama.** Adjust `windowHeight()` (Setup, step 3).
+
+## How it works
+
+- `sidebar/tamago.swift` is a cmux custom sidebar, a runtime-interpreted SwiftUI subset. It can't
+  read files or the network, so everything reaches it through cmux data. The daemon puts one
+  workspace progress label, `tamago|<epoch>|<mood>|<about>|<text>|<species>|<name>`, on the
+  workspace the comment is about, or on a free one if that workspace shows real progress. The
+  sidebar finds the label wherever it is.
+- `daemon/tamago.mjs` follows `cmux events` for agent hook events (turn ends, session starts) and
+  polls the sidebar snapshot to notice workspace switches, hopping and idle time. When it decides
+  to speak, it builds a prompt from `daemon/transcript.mjs` (a digest of the Claude Code
+  transcript), the cross-session timeline and its diary. It then asks Haiku for a one-liner as
+  JSON (`{mood, text}`).
+- Sidebar menu items can't take text input or store anything, so they set a workspace description
+  to a marker such as `tamago:rename` or `tamago:species:ghost`. The daemon restores the
+  description and does the rest: a native dialog for names, `pet.json` for the species.
+- `scripts/gen-species.mjs` bakes `sidebar/species.json` into the sidebar file, because the
+  sidebar can't load data at runtime. Run it after editing the species data.
+
+### cmux constraints found (0.64.22)
+
+- Custom sidebars have no files, network or timers. The writable channels that reach them are
+  `set-progress --label` and the workspace description; `set-status` doesn't.
+- The root view sits in a vertical scroll view, so `Spacer`/`safeAreaInset` can't pin a footer;
+  hence the explicit height knobs.
+- `\n`, `\\` and `\"` in string literals are not unescaped, but raw strings (`#"…"#`) work.
+  `obj != nil` is unreliable; use interpolation (`"\(w.progress.label)"`) to tolerate missing
+  values.
+- A button action has to be a `cmux(...)` call itself. A helper `func` that calls `cmux` runs
+  nothing.
 - The cmux socket (default mode `cmuxOnly`) only admits processes started inside a cmux terminal.
-  Detached children keep access; launchd jobs and `notifications.command` in cmux.json do not
-  (tested). So the daemon is started from a cmux shell by `scripts/ensure-running.sh`; to survive
-  cmux restarts, call that script from `~/.zshrc` (cmux reopens its terminals on launch):
-  `[[ -n "$CMUX_SOCKET_PATH" ]] && ~/code/tamago/scripts/ensure-running.sh 2>/dev/null`.
-  `TextField`/`@State` exist only in the newer `.js` sidebar engine (not in 0.64.22).
-- Tama's own LLM calls use `/opt/homebrew/bin/claude` with hooks disabled; the `claude` wrapper on
-  PATH inside cmux would record them as workspace prompts.
+  Detached children keep access. launchd jobs and `notifications.command` in cmux.json don't,
+  hence the `~/.zshrc` line.
+- `TextField`/`@State` only exist in cmux's newer `.js` sidebar engine.
+
+## Credits
+
+The species art comes from
+[ramarivera/coding-buddy](https://github.com/ramarivera/coding-buddy) (MIT License, © 2026
+coding-buddy contributors), an open-source recreation of Claude Code's `/buddy`. The attribution is
+kept in `sidebar/species.json`.

@@ -26,7 +26,12 @@ const run = promisify(execFile);
 const CMUX = "/Applications/cmux.app/Contents/Resources/bin/cmux";
 // The `claude` on PATH inside cmux is a wrapper that records prompts as workspace activity;
 // call the real binary so Tama's own LLM calls never show up in the sidebar.
-const CLAUDE = process.env.TAMAGO_CLAUDE ?? "/opt/homebrew/bin/claude";
+const CLAUDE = process.env.TAMAGO_CLAUDE ?? [
+  "/opt/homebrew/bin/claude",
+  "/usr/local/bin/claude",
+  path.join(os.homedir(), ".local/bin/claude"),
+  path.join(os.homedir(), ".claude/local/claude"),
+].find((p) => fs.existsSync(p)) ?? "claude";
 const NAME = process.env.TAMAGO_NAME ?? "Tama";
 const LANG = process.env.TAMAGO_LANG ?? "English";
 const POLL_MS = Number(process.env.TAMAGO_POLL_MS ?? 3000);
