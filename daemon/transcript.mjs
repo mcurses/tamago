@@ -8,7 +8,9 @@ import path from "node:path";
 const PROJECTS = path.join(os.homedir(), ".claude/projects");
 const TAIL_BYTES = 768 * 1024;
 const MAX_AGE_MS = 12 * 3600_000;
-const TEST_FAIL = /(\b\d+ (failed|failing)\b|^FAIL\b|\bTests?:.*\bfailed\b|AssertionError|✗ |\bnot ok \d+)/m;
+const TEST_FAIL = /(\b[1-9]\d* (failed|failing)\b|^FAIL\b|\bTests?:.*\b[1-9]\d* failed\b|AssertionError|✗ |\bnot ok \d+)/m;
+const TEST_PASS = /(\b[1-9]\d* (passed|passing)\b|^# pass [1-9]|\bTests?:.*\b[1-9]\d* passed\b|^PASS\b|\bAll tests passed\b)/m;
+const COMMIT = /\bgit\b[^\n|;&]*\bcommit\b/;
 
 // Claude Code names project dirs after the cwd with every non-alphanumeric char replaced by "-".
 const slug = (dir) => dir.replace(/[^a-zA-Z0-9]/g, "-");
@@ -84,8 +86,9 @@ function promptText(e) {
 }
 
 /**
- * Digest of the latest turn: { prompt, earlierPrompts, said, tools, errors, testFailed, diffLines,
- * durationMs, ended, lastTurnEndAt, turnsToday }.
+ * Digest of the latest turn: { prompt, earlierPrompts, said, tools, errors, testFailed, testPassed,
+ * commits, diffLines, durationMs, ended, lastTurnEndAt, turnsToday }. testPassed means the last test
+ * run of the turn passed.
  */
 export function digest(file) {
   const entries = readTail(file);
@@ -110,6 +113,8 @@ export function digest(file) {
   const errors = [];
   let said = "";
   let testFailed = false;
+  let testPassed = false;
+  let commits = 0;
   let diffLines = 0;
   let durationMs = null;
   let ended = false;
@@ -122,12 +127,14 @@ export function digest(file) {
       if (e.type === "assistant" && b.type === "text" && b.text.trim()) said = b.text;
       if (b.type === "tool_use") {
         tools[b.name] = (tools[b.name] ?? 0) + 1;
+        if (b.name === "Bash" && COMMIT.test(String(b.input?.command ?? ""))) commits++;
         diffLines += lineCount(b.input?.new_string) + lineCount(b.input?.old_string) + lineCount(b.input?.content);
       }
       if (b.type === "tool_result") {
         const text = resultText(b);
         if (b.is_error && errors.length < 2) errors.push(text.trim().slice(0, 200));
-        if (TEST_FAIL.test(text)) testFailed = true;
+        if (TEST_FAIL.test(text)) [testFailed, testPassed] = [true, false];
+        else if (TEST_PASS.test(text)) testPassed = true;
       }
     }
   }
@@ -138,6 +145,8 @@ export function digest(file) {
     tools,
     errors,
     testFailed,
+    testPassed,
+    commits,
     diffLines,
     durationMs,
     ended,
