@@ -41,7 +41,11 @@ on its species' character and its current mood.
   likes being poked ten times in a row), with a short animation
   and a reply.
 - **A full workspace sidebar.** Click a row to switch, drag to reorder, right-click for Rename,
-  Pin, Mark as Read, Move, Color and Close.
+  Pin, Mark as Read, Move, Color and Close. The compiled sidebar also shows what cmux's own
+  sidebar shows per workspace: agent status pills and the working spinner, description, latest
+  notification, branch and directory, progress, log lines, ports and pull requests (clickable) and
+  SSH targets. It follows cmux's own switches in Settings → Sidebar (or `"sidebar"` in
+  `cmux.json`), so turn details on and off there.
 
 ## Requirements
 
@@ -159,6 +163,11 @@ The mood is stored in `~/.local/state/tamago/mood.json`. The interpreted sidebar
 
 ## Settings
 
+What the compiled sidebar shows per workspace follows cmux's sidebar settings (Settings → Sidebar:
+show branch and directory, ports, pull requests, log, progress, status pills, agent activity,
+notification text, hide all details, …). The daemon reads them every 10 seconds. Branch and pull
+request data need cmux's "watch git status" setting.
+
 Environment variables for the daemon. Set them in the shell that starts it, for example in front
 of `ensure-running.sh` in your `~/.zshrc` line.
 
@@ -209,6 +218,10 @@ diary (`history.jsonl`) and saved workspace descriptions.
   workspace progress label, `tamago|<epoch>|<mood>|<about>|<text>|<species>|<name>`, on the
   workspace the comment is about, or on a free one if that workspace shows real progress. The
   sidebar finds the label wherever it is.
+- `daemon/details.mjs` collects the per-workspace details for the compiled sidebar (status
+  pills, progress and log from `cmux sidebar-state`, re-read when cmux sends a `sidebar` event for
+  that workspace and once a minute while the sidebar is in use) and reads cmux's sidebar settings
+  from its preferences and `cmux.json`.
 - `daemon/tamago.mjs` follows `cmux events` for agent hook events (turn ends, session starts) and
   polls the sidebar snapshot to notice workspace switches, hopping and idle time. When it decides
   to speak, it builds a prompt from `daemon/transcript.mjs` (a digest of the Claude Code
