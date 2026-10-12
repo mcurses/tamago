@@ -8,6 +8,7 @@
 //   node daemon/tamago.mjs --dry-run  log what would be said, don't touch cmux
 //   node daemon/tamago.mjs --peek [--brain]  show Tama's context for the focused workspace
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
+//   node daemon/tamago.mjs --name [name]     show or set the pet's name (also: right-click Tama)
 //
 // Env overrides: TAMAGO_NAME, TAMAGO_LANG, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE,
 // TAMAGO_DELAY_S ("min-max" seconds between a turn ending and Tama reacting), TAMAGO_CHANCE.
@@ -77,14 +78,28 @@ function clean(text) {
 // The label stays even without a comment (epoch 0) because it also carries the chosen species.
 let carrier = null;
 let bubble = { at: 0, mood: "idle", about: "-", text: "-" };
-let paintedSpecies = null;
+let painted = null; // species + name last written, to repaint when either changes
 
 const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
-const SPECIES_FILE = path.join(STATE_DIR, "species.json");
+// The pet's species and name, chosen from its menu or with --species / --name.
+const PET_FILE = path.join(STATE_DIR, "pet.json");
+const LEGACY_SPECIES_FILE = path.join(STATE_DIR, "species.json");
+
+function readPet() {
+  return { ...readJson(LEGACY_SPECIES_FILE), ...readJson(PET_FILE) };
+}
+
+function writePet(patch) {
+  fs.writeFileSync(PET_FILE, JSON.stringify({ ...readPet(), ...patch }));
+}
+
+function petName() {
+  return clean(readPet().name ?? "").slice(0, 24) || NAME;
+}
 const SPECIES = ["egg", ...Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, "sidebar/species.json"), "utf8")).species)];
 
 function chosenSpecies() {
-  const s = readJson(SPECIES_FILE)?.species;
+  const s = readPet().species;
   return SPECIES.includes(s) ? s : "egg";
 }
 
@@ -92,8 +107,8 @@ const isOurs = (progress) => progress === "none" || progress.includes("tamago|")
 
 /** Write the bubble label, moving it to a free workspace if the preferred one shows real progress. */
 async function paint(preferId) {
-  const species = chosenSpecies();
-  const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${bubble.text}|${species}`;
+  const pet = `${chosenSpecies()}|${petName()}`;
+  const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${bubble.text}|${pet}`;
   if (DRY) {
     log("dry-run paint", label);
     return true;
@@ -116,7 +131,7 @@ async function paint(preferId) {
   }
   await cmux("set-progress", "0", "--label", label, "--workspace", target);
   carrier = target;
-  paintedSpecies = species;
+  painted = pet;
   spokenTo.add(target);
   return true;
 }
@@ -155,7 +170,7 @@ async function adoptBubble(snap) {
 
 // ---------- the brain ----------
 
-const persona = () => `You are ${NAME}, a tiny ASCII ${chosenSpecies() === "egg" ? "egg-creature" : chosenSpecies()} living in the corner of a developer's terminal sidebar.
+const persona = () => `You are ${petName()}, a tiny ASCII ${chosenSpecies() === "egg" ? "egg-creature" : chosenSpecies()} living in the corner of a developer's terminal sidebar.
 You watch them code across all their sessions and occasionally make one short comment.
 You are ambient, like a cat on the desk: you don't answer what they typed, you remark on what you
 noticed: how a turn went, errors, failing tests, giant diffs, how long things take, patterns
@@ -446,6 +461,7 @@ function detect(snap) {
 const MARKER_PREFIX = "tamago:";
 const RENAME_MARKER = "tamago:rename";
 const SPECIES_MARKER = "tamago:species:"; // from the species menu, or `--species <name>`
+const PETNAME_MARKER = "tamago:petname";
 // Remembered on disk too, so a Rename clicked while the daemon was down doesn't lose the description.
 const DESCRIPTIONS = path.join(STATE_DIR, "descriptions.json");
 const descriptions = new Map(Object.entries(readJson(DESCRIPTIONS) ?? {})); // workspace id -> description
@@ -459,16 +475,16 @@ function readJson(file) {
 }
 let renaming = false;
 
-async function askName(current) {
+async function askName(prompt, current) {
   const script = [
     "on run argv",
     "  tell current application to activate",
-    '  set r to display dialog "Rename workspace" default answer (item 1 of argv) with title "Tamago" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel"',
+    '  set r to display dialog (item 1 of argv) default answer (item 2 of argv) with title "Tamago" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel"',
     "  return text returned of r",
     "end run",
   ];
   try {
-    const { stdout } = await run("osascript", [...script.flatMap((l) => ["-e", l]), current], { timeout: 300_000 });
+    const { stdout } = await run("osascript", [...script.flatMap((l) => ["-e", l]), prompt, current], { timeout: 300_000 });
     return stdout.replace(/\n$/, "");
   } catch (err) {
     // osascript exits 1 with "User canceled. (-128)" on Cancel; anything else is a real failure.
@@ -498,7 +514,7 @@ async function handleRequests(snap) {
       try {
         await restoreDescription(w);
         if (SPECIES.includes(species)) {
-          fs.writeFileSync(SPECIES_FILE, JSON.stringify({ species }));
+          writePet({ species });
           log("species set to", species);
           await paint();
         }
@@ -507,12 +523,29 @@ async function handleRequests(snap) {
       }
       continue;
     }
+    if (marker === PETNAME_MARKER && !renaming) {
+      renaming = true;
+      try {
+        await restoreDescription(w);
+        const name = await askName(`Rename ${petName()}`, petName());
+        if (name && clean(name)) {
+          writePet({ name: clean(name).slice(0, 24) });
+          log("pet renamed to", petName());
+          await paint();
+        }
+      } catch (err) {
+        log("pet rename failed:", err.message?.split("\n")[0]);
+      } finally {
+        renaming = false;
+      }
+      continue;
+    }
     if (marker !== RENAME_MARKER || renaming) continue;
     renaming = true;
     try {
       await restoreDescription(w);
       log("rename requested", w.title);
-      askName(w.title).then(async (title) => {
+      askName("Rename workspace", w.title).then(async (title) => {
         log("rename dialog returned", JSON.stringify(title));
         if (title && title.trim() && title !== w.title) {
           await cmux("workspace-action", "--action", "rename", "--title", title.trim(), "--workspace", w.id);
@@ -553,7 +586,7 @@ async function tick() {
     await adoptBubble(snap).catch((err) => log("adopting bubble failed:", err.message));
   }
   await handleRequests(snap).catch((err) => log("requests failed:", err.message));
-  if (chosenSpecies() !== paintedSpecies) await paint().catch((err) => log("paint failed:", err.message));
+  if (`${chosenSpecies()}|${petName()}` !== painted) await paint().catch((err) => log("paint failed:", err.message));
   const event = detect(snap);
   if (!event || cooling(event.priority)) return;
   busy = true;
@@ -593,13 +626,24 @@ if (args[0] === "--peek") {
   process.exit(0);
 }
 
+if (args[0] === "--name") {
+  // Like --species: the running daemon repaints within one poll.
+  if (!args[1]) {
+    console.log(petName());
+    process.exit(0);
+  }
+  writePet({ name: clean(args.slice(1).join(" ")).slice(0, 24) });
+  console.log(`name set to ${petName()}`);
+  process.exit(0);
+}
+
 if (args[0] === "--species") {
   // The running daemon notices the change within one poll and repaints the label.
   if (!SPECIES.includes(args[1])) {
     console.log(`current: ${chosenSpecies()}\navailable: ${SPECIES.join(", ")}`);
     process.exit(args[1] ? 1 : 0);
   }
-  fs.writeFileSync(SPECIES_FILE, JSON.stringify({ species: args[1] }));
+  writePet({ species: args[1] });
   console.log(`species set to ${args[1]}`);
   process.exit(0);
 }
@@ -631,7 +675,7 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-log(`${NAME} is awake (poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
+log(`${petName()} is awake (poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
 await tick();
 watchAgentEvents();
 setInterval(tick, POLL_MS);

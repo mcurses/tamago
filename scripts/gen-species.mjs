@@ -28,10 +28,10 @@ const lines = [
   '    return ""',
   "}",
   "",
-  "func speciesMenu() -> some View {",
-  '    Button("Tama (egg)") { pickSpecies("egg") }',
+  "func speciesMenu(_ w) -> some View {",
+  '    Button("Egg") { petRequest(w, "tamago:species:egg") }',
   "    Divider()",
-  ...names.map((name) => `    Button("${name[0].toUpperCase() + name.slice(1)}") { pickSpecies("${name}") }`),
+  ...names.map((name) => `    Button("${name[0].toUpperCase() + name.slice(1)}") { petRequest(w, "tamago:species:${name}") }`),
   "}",
   END,
 ];
