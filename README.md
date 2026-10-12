@@ -15,6 +15,13 @@ matter which workspace is open.
   `claude -p`. There is one global bubble: a single progress label
   `tamago|<epoch>|<mood>|<about>|<text>` on one workspace (the one it is about, or a free one if
   that shows real progress), which the sidebar finds wherever it is and shows as "re: <about>".
+- Species: right-click Tama and pick one of the 18 Claude Code `/buddy` species (or the default
+  egg), or run `node daemon/tamago.mjs --species <name>`. The art is vendored in
+  `sidebar/species.json` from the MIT-licensed clone
+  [ramarivera/coding-buddy](https://github.com/ramarivera/coding-buddy) and baked into
+  `tamago.swift` by `node scripts/gen-species.mjs`. The choice lives in
+  `~/.local/state/tamago/species.json`; the daemon adds it to the label as a sixth field, so with
+  the daemon stopped the sidebar shows `defaultSpecies()`.
 - Rename: sidebars have no text input in 0.64.22, so the menu item sets the description to a
   marker and the daemon shows a native dialog. Without the daemon, Rename does nothing.
 
@@ -34,7 +41,7 @@ tail -f ~/.local/state/tamago/tamago.log
   `set-status` does not.
 - The root view sits in a vertical scroll view, so `Spacer`/`safeAreaInset` can't pin a footer.
   Heights are explicit knobs at the top of `tamago.swift` (`sidebarHeight`, `footerHeight`).
-- `\n` and `\\` in string literals are not unescaped; `obj != nil` is unreliable, use
+- `\n`, `\\` and `\"` in string literals are not unescaped (raw strings `#"…"#` work); `obj != nil` is unreliable, use
   interpolation (`"\(w.progress.label)"`) to tolerate missing values.
 - The cmux socket (default mode `cmuxOnly`) only admits processes started inside a cmux terminal.
   Detached children keep access; launchd jobs and `notifications.command` in cmux.json do not
