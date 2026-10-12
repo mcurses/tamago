@@ -119,6 +119,8 @@ VStack(alignment: .leading, spacing: 0) {
             Text(tamaPart(3))
                 .font(.system(size: 11))
                 .lineLimit(5)
+                // TODO: fix this later (bubble text alignment workaround; revisit)
+                .multilineTextAlignment(.leading)
                 .frame(width: bubbleWidth(), alignment: .leading)
                 .padding(7)
                 .background { RoundedRectangle(cornerRadius: 8).stroke("#8A8A8A", lineWidth: 1) }
