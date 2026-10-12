@@ -104,6 +104,8 @@ struct WorkspaceRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            // Ports and pull requests ride along on the title line, so they don't make rows taller.
+            if !settings.hideAllDetails { linkChips.fixedSize() }
             if workspace.isPinned {
                 Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.secondary)
             }
@@ -195,33 +197,55 @@ struct WorkspaceRow: View {
         .background(Capsule().fill(color.opacity(0.15)))
     }
 
-    /// Ports, pull requests and the SSH target as small chips; links open the way cmux's settings say.
-    @ViewBuilder private var chips: some View {
-        let ports = settings.showPorts ? (extra?.ports ?? []) : []
-        let prs = settings.showPullRequests ? (extra?.prs ?? []) : []
-        let remote = settings.showSSH ? extra?.remote : nil
-        if !ports.isEmpty || !prs.isEmpty || remote != nil {
-            FlowRow(spacing: 3) {
-                ForEach(ports, id: \.self) { port in
-                    chip(":\(port)", icon: "network") {
-                        model.act("open-url", workspace: workspace.id, ["url": "http://localhost:\(port)", "via": "port"])
-                    }
+    /// Ports and pull requests as small chips on the title line; links open the way cmux's
+    /// settings say. At most two, so the title keeps its room; the rest show as "+N" (with a
+    /// tooltip listing them; the right-click menu opens any of them).
+    @ViewBuilder private var linkChips: some View {
+        let links = self.links
+        if !links.isEmpty {
+            HStack(spacing: 3) {
+                ForEach(links.prefix(2), id: \.url) { link in
+                    chip(link.label, icon: nil, action: link.action)
                 }
-                ForEach(prs, id: \.url) { pr in
-                    chip(pr.label, icon: "arrow.triangle.pull", action: settings.makePullRequestsClickable ? {
-                        model.act("open-url", workspace: workspace.id, ["url": pr.url, "via": "pr"])
-                    } : nil)
-                }
-                if let remote {
-                    chip(remote.target + (remote.state.map { " · \($0)" } ?? ""), icon: "network.badge.shield.half.filled", action: nil)
+                if links.count > 2 {
+                    chip("+\(links.count - 2)", icon: nil, action: nil)
+                        .help(links.dropFirst(2).map(\.label).joined(separator: ", "))
                 }
             }
         }
     }
 
-    @ViewBuilder private func chip(_ text: String, icon: String, action: (() -> Void)?) -> some View {
+    private struct LinkChip {
+        var label: String
+        var url: String
+        var action: (() -> Void)?
+    }
+
+    private var links: [LinkChip] {
+        let id = workspace.id
+        let ports = (settings.showPorts ? (extra?.ports ?? []) : []).map { port in
+            LinkChip(label: ":\(port)", url: "http://localhost:\(port)") { [model] in
+                model.act("open-url", workspace: id, ["url": "http://localhost:\(port)", "via": "port"])
+            }
+        }
+        let prs = (settings.showPullRequests ? (extra?.prs ?? []) : []).map { pr in
+            LinkChip(label: pr.label, url: pr.url, action: settings.makePullRequestsClickable ? { [model] in
+                model.act("open-url", workspace: id, ["url": pr.url, "via": "pr"])
+            } : nil)
+        }
+        return prs + ports
+    }
+
+    /// The SSH target, below the title.
+    @ViewBuilder private var chips: some View {
+        if settings.showSSH, let remote = extra?.remote {
+            chip(remote.target + (remote.state.map { " · \($0)" } ?? ""), icon: "network.badge.shield.half.filled", action: nil)
+        }
+    }
+
+    @ViewBuilder private func chip(_ text: String, icon: String?, action: (() -> Void)?) -> some View {
         let label = HStack(spacing: 2) {
-            Image(systemName: icon)
+            if let icon { Image(systemName: icon) }
             Text(text).lineLimit(1)
         }
         .font(.system(size: 9, design: .monospaced))
@@ -248,6 +272,12 @@ struct WorkspaceRow: View {
     @ViewBuilder private var menu: some View {
         let id = workspace.id
         Button("Rename…") { renaming = id }
+        let links = self.links.filter { $0.action != nil }
+        if !links.isEmpty {
+            Menu("Open") {
+                ForEach(links, id: \.url) { link in Button(link.label) { link.action?() } }
+            }
+        }
         Button(workspace.isPinned ? "Unpin" : "Pin") { model.act(workspace.isPinned ? "unpin" : "pin", workspace: id) }
         Button(workspace.unreadCount > 0 ? "Mark as Read" : "Mark as Unread") {
             model.act(workspace.unreadCount > 0 ? "mark-read" : "mark-unread", workspace: id)
