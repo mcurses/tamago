@@ -77,16 +77,55 @@ func agoLabel(_ secs) -> String {
     return "\(secs / 3600)h ago"
 }
 
+func act(_ w, _ action) {
+    cmux("workspace.action", workspace_id: w.id, action: action)
+}
+
+func colorItem(_ w, _ name, _ hex) -> some View {
+    Button(name) { cmux("workspace.action", workspace_id: w.id, action: "set_color", color: hex) }
+}
+
+func menu(_ w) -> some View {
+    // No text input exists in sidebars; the daemon sees this marker and shows a rename dialog.
+    Button("Rename…") { cmux("workspace.action", workspace_id: w.id, action: "set_description", description: "tamago:rename") }
+    Button(w.pinned ? "Unpin" : "Pin") { act(w, w.pinned ? "unpin" : "pin") }
+    Button(w.unread > 0 ? "Mark as Read" : "Mark as Unread") { act(w, w.unread > 0 ? "mark_read" : "mark_unread") }
+    Divider()
+    Button("Move to Top") { act(w, "move_top") }
+    Button("Move Up") { act(w, "move_up") }
+    Button("Move Down") { act(w, "move_down") }
+    Divider()
+    Menu("Color") {
+        colorItem(w, "Red", "#C0392B")
+        colorItem(w, "Orange", "#E67E22")
+        colorItem(w, "Amber", "#F1C40F")
+        colorItem(w, "Green", "#27AE60")
+        colorItem(w, "Teal", "#16A085")
+        colorItem(w, "Blue", "#2E86DE")
+        colorItem(w, "Purple", "#8E44AD")
+        colorItem(w, "Rose", "#E84393")
+        Divider()
+        Button("Clear Color") { act(w, "clear_color") }
+    }
+    Divider()
+    Button("Close Other Workspaces") { act(w, "close_others") }
+    Button("Close Workspace") { cmux("workspace.close", workspace_id: w.id) }
+}
+
 func row(_ w) -> some View {
     Button(action: { cmux("workspace.select", workspace_id: w.id) }) {
         HStack(spacing: 6) {
+            Capsule().frame(width: 3, height: 16).foregroundColor("\(w.color)" != "" ? w.color : "#00000000")
             VStack(alignment: .leading, spacing: 1) {
                 Text(w.title).font(.system(size: 12)).fontWeight(w.selected ? .semibold : .regular).lineLimit(1).truncationMode(.tail)
-                if w.branch != nil && w.branch != "" {
+                if "\(w.branch)" != "" {
                     Text(w.branch).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary).lineLimit(1)
                 }
             }
             Spacer()
+            if w.pinned {
+                Image(systemName: "pin.fill").font(.system(size: 9)).foregroundColor(.secondary)
+            }
             if w.unread > 0 {
                 Text("\(w.unread)").font(.system(size: 9, design: .monospaced)).bold()
                     .foregroundColor("#FFFFFF")
@@ -98,12 +137,13 @@ func row(_ w) -> some View {
         // Near-invisible fill keeps the whole row clickable; a fully clear one isn't hit-tested.
         .background { RoundedRectangle(cornerRadius: 6).foregroundColor(w.selected ? "#3D7BFF40" : "#80808003") }
     }
+    .contextMenu { menu(w) }
 }
 
 VStack(alignment: .leading, spacing: 0) {
     ScrollView {
         VStack(alignment: .leading, spacing: 1) {
-            ForEach(workspaces) { w in
+            Reorderable(workspaces, move: "workspace.reorder") { w in
                 row(w)
             }
         }
