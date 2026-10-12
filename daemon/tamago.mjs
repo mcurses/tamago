@@ -754,6 +754,8 @@ fs.writeFileSync(PIDFILE, String(process.pid));
 const TOKEN_FILE = path.join(STATE_DIR, "token");
 const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
 
+const round1 = (x) => Math.round(x * 10) / 10;
+
 function sidebarState() {
   const workspaces = {};
   for (const w of latestSnap?.workspaces ?? []) workspaces[w.id] = { color: w.custom_color ?? null, description: w.description ?? null };
@@ -763,7 +765,8 @@ function sidebarState() {
   return {
     pet: { species: chosenSpecies(), name: petName() },
     bubble,
-    mood: { name, eye, valence: m.valence, energy: m.energy, fullness: m.fullness, hungry },
+    // Rounded: the mood drifts every poll, and the sidebar redraws (closing open menus) on every change.
+    mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy), fullness: round1(m.fullness), hungry, eats: character().appetite > 0 },
     reaction,
     workspaces,
   };

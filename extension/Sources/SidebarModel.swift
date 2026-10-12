@@ -36,11 +36,13 @@ final class SidebarModel: ObservableObject {
     }
 
     func refresh() async {
+        // Publish only real changes: every publish redraws the sidebar, which closes open menus.
         do {
-            daemon = try await client.state()
-            daemonOnline = true
+            let state = try await client.state()
+            if state != daemon { daemon = state }
+            if !daemonOnline { daemonOnline = true }
         } catch {
-            daemonOnline = false
+            if daemonOnline { daemonOnline = false }
         }
     }
 

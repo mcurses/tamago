@@ -147,7 +147,13 @@ struct PetFooter: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        if let frozenAt { footer(at: frozenAt) } else { live }
+        // The menu hangs outside the timeline: anything inside is rebuilt every tick, and a
+        // rebuilt menu closes while it's open.
+        Group {
+            if let frozenAt { footer(at: frozenAt) } else { live }
+        }
+        .contentShape(Rectangle())
+        .contextMenu { menu }
     }
 
     @ViewBuilder private var live: some View {
@@ -197,8 +203,6 @@ struct PetFooter: View {
         // plus 20pt; keep Tama above it.
         .padding(.bottom, 40)
         .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .contextMenu { menu }
     }
 
     // MARK: sprite and reactions

@@ -1,25 +1,25 @@
 import Foundation
 
 /// What the daemon reports at GET /state (see daemon/server.mjs).
-struct DaemonState: Decodable, Sendable {
-    struct Pet: Decodable, Sendable {
+struct DaemonState: Decodable, Equatable, Sendable {
+    struct Pet: Decodable, Equatable, Sendable {
         var species: String
         var name: String
     }
 
-    struct Bubble: Decodable, Sendable {
+    struct Bubble: Decodable, Equatable, Sendable {
         var at: Double // epoch milliseconds; 0 = no comment yet
         var mood: String
         var about: String
         var text: String
     }
 
-    struct Workspace: Decodable, Sendable {
+    struct Workspace: Decodable, Equatable, Sendable {
         var color: String?
         var description: String?
     }
 
-    struct Mood: Decodable, Sendable {
+    struct Mood: Decodable, Equatable, Sendable {
         var name: String // "happy", "grumpy", … (daemon/mood.mjs moodName)
         var eye: String // the sprite expression when Tama isn't talking
         var valence: Double
@@ -30,7 +30,7 @@ struct DaemonState: Decodable, Sendable {
     }
 
     /// The last feed / pet / poke and how Tama took it ("love", "meh", "hate").
-    struct Reaction: Decodable, Sendable {
+    struct Reaction: Decodable, Equatable, Sendable {
         var kind: String
         var response: String
         var at: Double // epoch milliseconds; 0 = never
