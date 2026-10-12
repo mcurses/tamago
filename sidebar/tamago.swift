@@ -95,7 +95,8 @@ func row(_ w) -> some View {
             }
         }
         .padding(6)
-        .background { RoundedRectangle(cornerRadius: 6).foregroundColor(w.selected ? "accent" : "#000000").opacity(w.selected ? 0.25 : 0.0) }
+        // Near-invisible fill keeps the whole row clickable; a fully clear one isn't hit-tested.
+        .background { RoundedRectangle(cornerRadius: 6).foregroundColor(w.selected ? "#3D7BFF40" : "#80808003") }
     }
 }
 
