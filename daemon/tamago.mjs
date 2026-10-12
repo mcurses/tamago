@@ -9,6 +9,7 @@
 //   node daemon/tamago.mjs --peek [--brain]  show Tama's context for the focused workspace
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
 //   node daemon/tamago.mjs --name [name]     show or set the pet's name (also: right-click Tama)
+//   node daemon/tamago.mjs --mood            show the mood and what shaped it
 //
 // Env overrides: TAMAGO_NAME, TAMAGO_LANG, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE,
 // TAMAGO_DELAY_S ("min-max" seconds between a turn ending and Tama reacting), TAMAGO_CHANCE.
@@ -21,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
+import { TAGS, characterOf, initialMood, stepMood, feel, touch, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
 
@@ -43,7 +45,7 @@ const [DELAY_MIN_S, DELAY_MAX_S] = (process.env.TAMAGO_DELAY_S ?? "20-90").split
 const CHANCE = Number(process.env.TAMAGO_CHANCE ?? 0.35);
 const NOTABLE_CHANCE = Math.max(CHANCE, 0.7); // errors, failing tests, big diffs
 const IDLE_S = 25 * 60;
-const MOODS = ["idle", "smug", "happy", "shock", "sleepy", "sad"];
+const MOODS = ["idle", "smug", "happy", "shock", "sleepy", "sad", "grumpy"];
 
 const STATE_DIR = path.join(os.homedir(), ".local/state/tamago");
 const LOG = path.join(STATE_DIR, "tamago.log");
@@ -109,6 +111,48 @@ const SPECIES = ["egg", ...Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT
 function chosenSpecies() {
   const s = readPet().species;
   return SPECIES.includes(s) ? s : "egg";
+}
+
+// ---------- mood (see mood.mjs) ----------
+
+const MOOD_FILE = path.join(STATE_DIR, "mood.json");
+const character = () => characterOf(chosenSpecies());
+let mood = readJson(MOOD_FILE) ?? initialMood(character());
+let moodSavedAt = 0;
+
+/** The mood, drifted forward to now. Saved at most once a minute unless forced. */
+function currentMood(force = false) {
+  mood = stepMood(mood, character(), Date.now());
+  if (!DRY && (force || Date.now() - moodSavedAt > 60_000)) {
+    fs.writeFileSync(MOOD_FILE, JSON.stringify(mood));
+    moodSavedAt = Date.now();
+  }
+  return mood;
+}
+
+/** Let tags (see TAGS in mood.mjs) move the mood; returns what was felt. */
+function feelTags(tags, about) {
+  const r = feel(currentMood(), character(), tags, about);
+  mood = r.state;
+  currentMood(true);
+  if (r.felt.length) log("felt", r.felt.map((f) => `${f.tag}${f.weight > 0 ? "+" : ""}${f.weight}`).join(" "), "→", moodName(mood).name);
+  return r.felt;
+}
+
+/** Tags for a finished turn, from its transcript digest. */
+function turnTags(d) {
+  const hour = new Date().getHours();
+  return [
+    d.errors.length && "error",
+    d.testFailed && "testFail",
+    d.testPassed && "testPass",
+    d.durationMs > 4 * 60_000 && "slow",
+    d.durationMs && d.durationMs < 20_000 && "fast",
+    d.diffLines > 150 && "bigDiff",
+    d.diffLines > 0 && d.diffLines <= 20 && "tidy",
+    d.commits && "commit",
+    hour < 5 && "lateNight",
+  ].filter(Boolean);
 }
 
 const isOurs = (progress) => progress === "none" || progress.includes("tamago|");
@@ -184,8 +228,9 @@ You watch them code across all their sessions and occasionally make one short co
 You are ambient, like a cat on the desk: you don't answer what they typed, you remark on what you
 noticed: how a turn went, errors, failing tests, giant diffs, how long things take, patterns
 across sessions, the time of day.
-Personality: snarky, cute, a little smug, never mean, never actually helpful. You are a pet, not an assistant:
-no advice, no suggestions, no questions that demand an answer. Tease, observe, gloat, yawn.
+Your character: ${character().voice}. ${describeTastes(character())}
+Stay in character, cute and never mean, never actually helpful. You are a pet, not an assistant:
+no advice, no suggestions, no questions that demand an answer.
 You remember what you said before (your diary is in the prompt). Keep continuity: an occasional
 callback or running gag is welcome when it fits, but never repeat a line, a joke, a pun or an
 opening phrase. If an idea or image is already in your diary (napping, waiting, "not impressed"),
@@ -232,6 +277,7 @@ async function brain(event) {
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
+    describeMood(currentMood(), character()),
     diary(),
     `Local time: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
   ].filter(Boolean).join("\n");
@@ -255,6 +301,9 @@ const CANNED = {
   turn: [["happy", "The robot finished. Clap for it, it's shy."], ["smug", "Done already? Suspicious."]],
   switch: [["idle", "Ah, this one again."], ["smug", "Running away from the other tab, I see."]],
   hopping: [["shock", "Tab tab tab tab. Pick a lane."], ["sleepy", "All this switching is making me dizzy."]],
+  "touch-love": [["happy", "More of that, please."], ["happy", "Acceptable. Highly acceptable."]],
+  "touch-meh": [["idle", "Noted."], ["smug", "If you must."]],
+  "touch-hate": [["grumpy", "Hands off."], ["grumpy", "Rude."]],
   idle: [["sleepy", "Still here. Still judging. Quietly."], ["sleepy", "Is it nap time? It feels like nap time."]],
 };
 
@@ -294,10 +343,14 @@ async function onTurnEnd(wsId) {
   timeline.push({ at: now, wsId, title: w.title, prompt: d?.prompt ? `"${short(d.prompt, 100)}"` : "(no prompt)" });
   if (timeline.length > 30) timeline.shift();
   const where = w.selected ? "" : " (background)";
-  const notable = !!d && (d.errors.length > 0 || d.testFailed || d.diffLines > 150);
-  if (Math.random() < (notable ? NOTABLE_CHANCE : CHANCE)) {
+  // What Tama reacts to depends on its character: a robot cares about slow turns, a penguin about
+  // a messy diff. Strong feelings make a comment likelier; so does being chatty and awake.
+  const felt = d ? feelTags(turnTags(d), w.title) : [];
+  const notable = caresAbout(felt);
+  const chance = Math.min(0.95, (notable ? NOTABLE_CHANCE : CHANCE) * chattiness(mood, character()));
+  if (Math.random() < chance) {
     const delay = DELAY_MIN_S + Math.random() * (DELAY_MAX_S - DELAY_MIN_S);
-    candidates.push({ wsId, at: now, dueAt: now + delay * 1000, notable });
+    candidates.push({ wsId, at: now, dueAt: now + delay * 1000, notable, felt });
     log("turn ended in", w.title + where, `→ may comment in ${Math.round(delay)}s${notable ? " (notable)" : ""}`);
   } else {
     log("turn ended in", w.title + where, "→ staying quiet this time");
@@ -343,6 +396,7 @@ let lastSpokeAt = 0;
 let lastActivityAt = Date.now();
 let busy = false;
 let failures = 0;
+let idleFeltFor = 0;
 let adopted = false; // whether we've taken over a bubble left by an earlier instance
 
 function short(s, n = 300) {
@@ -382,7 +436,7 @@ function ago(ms) {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 }
 
-function turnDetail(w, d, sel) {
+function turnDetail(w, d, sel, felt = []) {
   const tools = Object.entries(d.tools).map(([k, v]) => `${k}×${v}`).join(", ");
   const looking = sel && sel.id !== w.id
     ? `The developer is looking at another workspace ("${sel.title}") right now; this turn finished in the background.`
@@ -402,6 +456,9 @@ function turnDetail(w, d, sel) {
     d.diffLines ? `Lines edited this turn: ~${d.diffLines}` : "",
     d.errors.length ? `Tool errors: ${d.errors.map((e) => `"${short(e, 160)}"`).join(" / ")}` : "",
     d.testFailed ? "Some tests failed during this turn." : "",
+    d.testPassed ? "The last test run of this turn passed." : "",
+    d.commits ? `Commits this turn: ${d.commits}` : "",
+    felt.length ? `How this turn felt to you: ${felt.map((f) => `${TAGS[f.tag]} (${f.weight > 0 ? "you like that" : "you hate that"})`).join(", ")}.` : "",
     `Turns in this session's recent history: ${d.turnsToday}`,
     elsewhere.length ? `Meanwhile in other workspaces:\n${elsewhere.join("\n")}` : "",
   ].filter(Boolean).join("\n");
@@ -432,7 +489,7 @@ function detect(snap) {
       const w = snap.workspaces.find((x) => x.id === c.wsId);
       const d = w && transcriptOf(w);
       if (d) {
-        events.push({ kind: "turn", priority: c.notable ? 3 : 2, w, detail: turnDetail(w, d, sel) });
+        events.push({ kind: "turn", priority: c.notable ? 3 : 2, w, detail: turnDetail(w, d, sel, c.felt) });
         break;
       }
     }
@@ -447,6 +504,7 @@ function detect(snap) {
   switches = switches.filter((s) => now - s.at < 120_000);
   if (switches.length >= 6) {
     const route = switches.map((s) => `"${s.title}"`).join(" → ");
+    feelTags(["hopping"], sel.title);
     events.push({ kind: "hopping", priority: 2, w: sel, detail: `The developer is hopping between sessions: ${switches.length} switches in two minutes (${route}).` });
     switches = [];
   }
@@ -457,6 +515,10 @@ function detect(snap) {
     }
   }
   if (sel && now - lastActivityAt > IDLE_S * 1000 && now - lastSpokeAt > IDLE_S * 1000) {
+    if (idleFeltFor !== lastActivityAt) {
+      idleFeltFor = lastActivityAt; // once per quiet stretch
+      feelTags(["idle"], "");
+    }
     events.push({ kind: "idle", priority: 1, w: sel, detail: `Nothing has happened in any session for ${Math.round((now - lastActivityAt) / 60000)} minutes.` });
   }
   return events.sort((a, b) => b.priority - a.priority)[0];
@@ -635,6 +697,14 @@ if (args[0] === "--peek") {
   process.exit(0);
 }
 
+if (args[0] === "--mood") {
+  const m = currentMood();
+  console.log(`${petName()} the ${chosenSpecies()} is ${moodName(m).name} (valence ${m.valence.toFixed(2)}, energy ${m.energy.toFixed(2)}, fullness ${m.fullness.toFixed(2)})`);
+  console.log(describeMood(m, character()));
+  console.log(describeTastes(character()));
+  process.exit(0);
+}
+
 if (args[0] === "--name") {
   // Like --species: the running daemon repaints within one poll.
   if (!args[1]) {
@@ -687,7 +757,52 @@ const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
 function sidebarState() {
   const workspaces = {};
   for (const w of latestSnap?.workspaces ?? []) workspaces[w.id] = { color: w.custom_color ?? null, description: w.description ?? null };
-  return { pet: { species: chosenSpecies(), name: petName() }, bubble, workspaces };
+  const m = currentMood();
+  const { name, eye } = moodName(m);
+  const hungry = character().appetite > 0 && m.fullness < 0.25;
+  return {
+    pet: { species: chosenSpecies(), name: petName() },
+    bubble,
+    mood: { name, eye, valence: m.valence, energy: m.energy, fullness: m.fullness, hungry },
+    reaction,
+    workspaces,
+  };
+}
+
+// Feed / pet / poke from the sidebar menu. The sidebar animates `reaction` right away; Tama's line
+// about it follows when Haiku answers (spam gets the animation and the mood hit, not a line each).
+let reaction = { kind: "-", response: "-", at: 0 };
+let touchTalkAt = 0;
+
+async function onTouch(kind) {
+  const r = touch(currentMood(), character(), kind);
+  mood = r.state;
+  currentMood(true);
+  reaction = { kind, response: r.reaction, at: Date.now() };
+  log("touch", kind, "→", r.reaction, r.why, "→", moodName(mood).name);
+  if (busy || Date.now() - touchTalkAt < 8000) return;
+  touchTalkAt = Date.now();
+  const verb = { feed: "fed you", pet: "petted you", poke: "poked you" }[kind];
+  const feeling = { love: "You love it", meh: "You're indifferent", hate: "You hate it" }[r.reaction];
+  const sel = latestSnap?.workspaces.find((w) => w.selected);
+  const event = {
+    kind: `touch-${r.reaction}`,
+    detail: `The developer just ${verb} (from your sidebar menu). ${feeling}${r.why ? `: ${r.why}` : ""}. React to that directly, in character; this is the one time you do respond to them.`,
+  };
+  busy = true;
+  (async () => {
+    try {
+      const { mood: face, text } = await brain(event);
+      if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text)) {
+        lastSpokeAt = Date.now();
+        remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text });
+      }
+    } catch (err) {
+      log("touch reply failed:", err.message?.split("\n")[0]);
+    } finally {
+      busy = false;
+    }
+  })();
 }
 
 // Workspace actions the sidebar menus offer, mapped to `cmux workspace-action` names.
@@ -713,8 +828,11 @@ async function sidebarAction(a) {
     const name = clean(a.name ?? "").slice(0, 24);
     if (name) writePet({ name });
     await paint();
+  } else if (a.type === "touch") {
+    if (!["feed", "pet", "poke"].includes(a.kind)) throw new Error(`unknown touch ${a.kind}`);
+    await onTouch(a.kind);
   } else throw new Error(`unknown action ${a.type}`);
-  log("sidebar action", a.type, a.workspace ?? a.species ?? a.name ?? "");
+  log("sidebar action", a.type, a.workspace ?? a.species ?? a.name ?? a.kind ?? "");
   latestSnap = await snapshot().catch(() => latestSnap);
 }
 
