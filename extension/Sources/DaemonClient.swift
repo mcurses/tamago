@@ -19,8 +19,27 @@ struct DaemonState: Decodable, Sendable {
         var description: String?
     }
 
+    struct Mood: Decodable, Sendable {
+        var name: String // "happy", "grumpy", … (daemon/mood.mjs moodName)
+        var eye: String // the sprite expression when Tama isn't talking
+        var valence: Double
+        var energy: Double
+        var fullness: Double
+        var hungry: Bool
+        var eats: Bool
+    }
+
+    /// The last feed / pet / poke and how Tama took it ("love", "meh", "hate").
+    struct Reaction: Decodable, Sendable {
+        var kind: String
+        var response: String
+        var at: Double // epoch milliseconds; 0 = never
+    }
+
     var pet: Pet
     var bubble: Bubble
+    var mood: Mood? // optional: older daemons don't send these
+    var reaction: Reaction?
     var workspaces: [String: Workspace]
 }
 

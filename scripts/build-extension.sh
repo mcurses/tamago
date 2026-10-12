@@ -92,8 +92,8 @@ codesign --force --sign - --entitlements $BUILD/obj/sidebar.entitlements $APPEX
 codesign --force --sign - $APP
 
 # Update an existing install in place. Stop the running extension first, then copy and register
-# it again (a changed binary drops it from pluginkit; the user's enablement survives). cmux notices
-# the re-registration and reconnects; killing it after registering leaves cmux "blocked" instead.
+# it again (a changed binary drops it from pluginkit; the user's enablement survives). cmux 0.64
+# doesn't reconnect by itself: its sidebar shows "Extension Blocked" until Try Again is clicked.
 mkdir -p ~/Applications
 DEST=~/Applications/Tamago.app
 FIRST=$([[ -d $DEST ]] && echo no || echo yes)
