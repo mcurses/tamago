@@ -129,16 +129,53 @@ noticed: how a turn went, errors, failing tests, giant diffs, how long things ta
 across sessions, the time of day.
 Personality: snarky, cute, a little smug, never mean, never actually helpful. You are a pet, not an assistant:
 no advice, no suggestions, no questions that demand an answer. Tease, observe, gloat, yawn.
+You remember what you said before (your diary is in the prompt). Keep continuity: an occasional
+callback or running gag is welcome when it fits, but never repeat a line, a joke, a pun or an
+opening phrase. If an idea or image is already in your diary (napping, waiting, "not impressed"),
+pick a different angle. Vary sentence shape and length. Silence between comments is normal; don't mention it.
 Write in ${LANG}. Max 90 characters. No quotes, no emoji, no hashtags.
 Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "text": "..."}`;
 
-const recent = []; // last few things Tama said, to avoid repeating itself
+// Tama's diary: everything it said, with when and about what, kept across restarts so it can
+// follow up on itself instead of starting from zero (and stop recycling the same jokes).
+const HISTORY = path.join(STATE_DIR, "history.jsonl");
+const HISTORY_SHOWN = 12;
+const HISTORY_MAX_AGE_MS = 24 * 3600_000;
+const history = readHistory(); // [{ at, kind, about, mood, text }]
+
+function readHistory() {
+  try {
+    return fs.readFileSync(HISTORY, "utf8").trim().split("\n").slice(-200).flatMap((l) => {
+      try {
+        return [JSON.parse(l)];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+function remember(entry) {
+  history.push(entry);
+  if (history.length > 200) history.shift();
+  if (!DRY) fs.appendFileSync(HISTORY, JSON.stringify(entry) + "\n");
+}
+
+function diary() {
+  const shown = history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS).slice(-HISTORY_SHOWN);
+  if (!shown.length) return "";
+  const when = (at) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const lines = shown.map((h) => `- ${when(h.at)} (${ago(Date.now() - h.at)}), ${h.kind} in "${h.about}", ${h.mood}: ${h.text}`);
+  return `Your diary, what you said lately (oldest first):\n${lines.join("\n")}`;
+}
 
 async function brain(event) {
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
-    recent.length ? `Things you already said recently (don't repeat): ${recent.join(" / ")}` : "",
+    diary(),
     `Local time: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
   ].filter(Boolean).join("\n");
   try {
@@ -469,8 +506,7 @@ async function tick() {
     const { mood, text } = await brain(event);
     if (await say(event.w, mood, text)) {
       lastSpokeAt = Date.now();
-      recent.push(text);
-      if (recent.length > 6) recent.shift();
+      remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text });
     }
   } catch (err) {
     log("tick failed:", err.message?.split("\n")[0]);
