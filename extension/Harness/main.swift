@@ -77,7 +77,7 @@ let rowWorkspaces: [(CmuxSidebarWorkspace, [String: Any])] = [
         "path": "~/code/tamago", "branch": "main", "dirty": true,
         "statuses": [["key": "claude_code", "label": "Claude Code", "value": "Running", "icon": "bolt.fill", "color": "#4C8DFF"]],
         "notification": "Claude is waiting for your input",
-        "ports": [5193, 8765], "prs": [["url": "https://github.com/mcurses/tamago/pull/12", "label": "PR #12"]],
+        "claudeSessions": 3, "ports": [5193, 8765], "prs": [["url": "https://github.com/mcurses/tamago/pull/12", "label": "PR #12"]],
     ]),
     (CmuxSidebarWorkspace(id: UUID(), title: "emma_rev1 coordinator with a long title that truncates"), [
         "path": "~/code/emma_rev1/very/deep/project/directory/structure", "branch": "slice/0517-author-window",
@@ -86,7 +86,7 @@ let rowWorkspaces: [(CmuxSidebarWorkspace, [String: Any])] = [
         "logs": [["level": "warning", "text": "disk almost full"], ["level": "success", "text": "deploy done"]],
         "remote": ["target": "VS7679", "state": "connected"], "description": "Pilot box driver work",
     ]),
-    (CmuxSidebarWorkspace(id: UUID(), title: "portfolio"), ["path": "~/code/portfolio", "ports": [4321]]),
+    (CmuxSidebarWorkspace(id: UUID(), title: "portfolio"), ["path": "~/code/portfolio", "ports": [4321], "claudeSessions": 1]),
 ]
 
 func settingsJSON(_ allOn: Bool) -> [String: Any] {

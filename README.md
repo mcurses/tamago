@@ -168,6 +168,11 @@ show branch and directory, ports, pull requests, log, progress, status pills, ag
 notification text, hide all details, …). The daemon reads them every 10 seconds. Branch and pull
 request data need cmux's "watch git status" setting.
 
+Tamago adds one thing of its own: a faint dot per Claude Code session running in a workspace,
+next to its title (counted from the `claude` processes and the `CMUX_WORKSPACE_ID` in their
+environment). Turn it off with right-click Tama → **Sidebar** → **Claude Session Dots**; the choice
+is stored in `~/.local/state/tamago/settings.json`.
+
 Environment variables for the daemon. Set them in the shell that starts it, for example in front
 of `ensure-running.sh` in your `~/.zshrc` line.
 

@@ -818,6 +818,36 @@ function watchSidebarEvents() {
   });
 }
 
+// Tamago's own sidebar settings, for things cmux's Settings don't cover. Toggled from Tama's
+// right-click menu (Sidebar submenu).
+const SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
+const TAMAGO_SETTINGS = { claudeDots: true };
+const tamagoSettings = () => ({ ...TAMAGO_SETTINGS, ...readJson(SETTINGS_FILE) });
+
+// Interactive Claude Code sessions per workspace, for the sidebar's session dots. Every `claude`
+// process with its own terminal counts once per terminal (Tama's own `claude -p` has none); its
+// workspace comes from the CMUX_WORKSPACE_ID cmux puts in each terminal's environment.
+let claudeSessions = new Map(); // workspace id -> count
+
+async function countClaudeSessions() {
+  if (Date.now() - stateReadAt > 60_000 || !tamagoSettings().claudeDots) return;
+  const { stdout } = await run("ps", ["-axo", "pid=,tty=,comm="], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+  const pids = stdout.split("\n").map((l) => l.trim().split(/\s+/)).filter(([, tty, comm]) => tty && tty !== "??" && path.basename(comm ?? "") === "claude").map(([pid]) => pid);
+  const counts = new Map();
+  if (pids.length) {
+    const { stdout: env } = await run("ps", ["-E", "-o", "tty=,command=", "-p", pids.join(",")], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 });
+    const ttys = new Map(); // workspace -> set of terminals
+    for (const line of env.split("\n")) {
+      const ws = line.match(/\bCMUX_WORKSPACE_ID=([0-9A-Fa-f-]{36})/)?.[1];
+      if (!ws) continue;
+      if (!ttys.has(ws)) ttys.set(ws, new Set());
+      ttys.get(ws).add(line.trim().split(/\s+/)[0]);
+    }
+    for (const [ws, set] of ttys) counts.set(ws, set.size);
+  }
+  claudeSessions = counts;
+}
+
 // Markers the interpreted sidebar's menus leave in descriptions for a moment; not worth showing.
 const shownDescription = (d) => (d && !d.startsWith(MARKER_PREFIX) ? d : null);
 
@@ -830,6 +860,7 @@ function sidebarState() {
       description: shownDescription(w.description),
       ...snapshotDetails(w),
       ...(details.get(w.id) ?? { statuses: [], progress: null, logs: [] }),
+      claudeSessions: claudeSessions.get(w.id) ?? 0,
     };
   }
   const m = currentMood();
@@ -841,6 +872,7 @@ function sidebarState() {
     mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy) },
     reaction,
     settings: sidebarSettings,
+    tamagoSettings: tamagoSettings(),
     workspaces,
   };
 }
@@ -911,6 +943,10 @@ async function sidebarAction(a) {
     const inCmux = a.via === "port" ? sidebarSettings.openPortLinksInCmuxBrowser : sidebarSettings.openPullRequestLinksInCmuxBrowser;
     if (inCmux) await cmux("browser", "open", url.href, ...(a.workspace ? ["--workspace", ws(a.workspace)] : []));
     else await run("open", [url.href]);
+  } else if (a.type === "tamago-setting") {
+    if (!(a.key in TAMAGO_SETTINGS)) throw new Error(`unknown setting ${a.key}`);
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...tamagoSettings(), [a.key]: a.value === "true" || a.value === true }));
+    await countClaudeSessions().catch(() => {});
   } else if (a.type === "touch") {
     if (!["feed", "pet", "poke"].includes(a.kind)) throw new Error(`unknown touch ${a.kind}`);
     await onTouch(a.kind);
@@ -925,6 +961,7 @@ if (!DRY && fs.existsSync(TOKEN_FILE)) {
   watchSidebarEvents();
   setTimeout(() => sweepDetails().catch(() => {}), 5000);
   setInterval(() => sweepDetails().catch(() => {}), 60_000);
+  setInterval(() => countClaudeSessions().catch((err) => log("counting Claude sessions failed:", err.message)), 10_000);
   startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
 }
 

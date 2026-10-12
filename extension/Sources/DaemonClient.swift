@@ -57,6 +57,12 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var statuses: [Status]?
         var progress: Progress?
         var logs: [Log]?
+        var claudeSessions: Int? // interactive Claude Code sessions running in this workspace
+    }
+
+    /// Tamago's own settings, for what cmux's Settings don't cover.
+    struct TamagoSettings: Decodable, Equatable, Sendable {
+        var claudeDots = true
     }
 
     /// cmux's own sidebar settings (Settings → Sidebar), read by the daemon.
@@ -99,6 +105,7 @@ struct DaemonState: Decodable, Equatable, Sendable {
     var mood: Mood? // optional: older daemons don't send these
     var reaction: Reaction?
     var settings: Settings?
+    var tamagoSettings: TamagoSettings?
     var workspaces: [String: Workspace]
 }
 

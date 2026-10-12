@@ -103,6 +103,7 @@ struct WorkspaceRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
+            sessionDots
             Spacer(minLength: 0)
             // Ports and pull requests ride along on the title line, so they don't make rows taller.
             if !settings.hideAllDetails { linkChips.fixedSize() }
@@ -116,6 +117,22 @@ struct WorkspaceRow: View {
                     .padding(4)
                     .background(Circle().fill(Color.accentColor))
             }
+        }
+    }
+
+    /// One faint dot per Claude Code session running here (Tama menu → Sidebar to turn off).
+    @ViewBuilder private var sessionDots: some View {
+        let n = extra?.claudeSessions ?? 0
+        if n > 0, model.daemon?.tamagoSettings?.claudeDots ?? true {
+            HStack(spacing: 2) {
+                ForEach(0 ..< min(n, 4), id: \.self) { _ in
+                    Circle().frame(width: 3.5, height: 3.5)
+                }
+                if n > 4 { Text("+").font(.system(size: 8)) }
+            }
+            .foregroundStyle(Color.secondary.opacity(0.45))
+            .help(n == 1 ? "1 Claude session" : "\(n) Claude sessions")
+            .fixedSize()
         }
     }
 
@@ -494,6 +511,13 @@ struct PetFooter: View {
         Button("Poke \(name)") { model.act("touch", ["kind": "poke"]) }
         Divider()
         Button("Rename \(name)…") { renaming = true }
+        Menu("Sidebar") {
+            let dots = model.daemon?.tamagoSettings?.claudeDots ?? true
+            Button(dots ? "✓ Claude Session Dots" : "Claude Session Dots") {
+                model.act("tamago-setting", ["key": "claudeDots", "value": dots ? "false" : "true"])
+            }
+            Text("Everything else: cmux Settings → Sidebar")
+        }
         Menu("Species") {
             ForEach(Pet.speciesNames, id: \.self) { species in
                 Button(species.prefix(1).uppercased() + species.dropFirst()) {
