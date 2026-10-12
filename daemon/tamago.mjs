@@ -193,6 +193,59 @@ function detect(snap) {
   return events.sort((a, b) => b.priority - a.priority)[0];
 }
 
+// ---------- sidebar requests ----------
+// Sidebars have no text input, so the sidebar's "Rename…" menu item sets the workspace description
+// to this marker. We restore the previous description and ask for the new name in a native dialog.
+
+const RENAME_MARKER = "tamago:rename";
+const descriptions = new Map(); // workspace id -> last description that wasn't the marker
+let renaming = false;
+
+async function askName(current) {
+  const script = [
+    "on run argv",
+    "  tell current application to activate",
+    '  set r to display dialog "Rename workspace" default answer (item 1 of argv) with title "Tamago" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel"',
+    "  return text returned of r",
+    "end run",
+  ];
+  try {
+    const { stdout } = await run("osascript", [...script.flatMap((l) => ["-e", l]), current], { timeout: 300_000 });
+    return stdout.replace(/\n$/, "");
+  } catch (err) {
+    // osascript exits 1 with "User canceled. (-128)" on Cancel; anything else is a real failure.
+    if (!String(err.stderr).includes("-128")) log("rename dialog failed:", String(err.stderr || err.message).trim());
+    return null;
+  }
+}
+
+async function handleRequests(snap) {
+  for (const w of snap.workspaces) {
+    if (w.description !== RENAME_MARKER) {
+      descriptions.set(w.id, w.description ?? null);
+      continue;
+    }
+    if (renaming) continue;
+    renaming = true;
+    const previous = descriptions.get(w.id) ?? null;
+    try {
+      if (previous) await cmux("workspace-action", "--action", "set-description", "--description", previous, "--workspace", w.id);
+      else await cmux("workspace-action", "--action", "clear-description", "--workspace", w.id);
+      log("rename requested", w.title);
+      askName(w.title).then(async (title) => {
+        log("rename dialog returned", JSON.stringify(title));
+        if (title && title.trim() && title !== w.title) {
+          await cmux("workspace-action", "--action", "rename", "--title", title.trim(), "--workspace", w.id);
+          log("renamed", w.title, "->", title.trim());
+        }
+      }).catch((err) => log("rename failed:", err.message)).finally(() => { renaming = false; });
+    } catch (err) {
+      renaming = false;
+      log("rename request failed:", err.message?.split("\n")[0]);
+    }
+  }
+}
+
 async function tick() {
   if (busy) return;
   let snap;
@@ -209,6 +262,7 @@ async function tick() {
     return;
   }
   failures = 0;
+  await handleRequests(snap).catch((err) => log("requests failed:", err.message));
   const event = detect(snap);
   if (!event) return;
   const cooldown = event.priority >= 3 ? COOLDOWN_S / 2 : COOLDOWN_S;
