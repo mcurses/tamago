@@ -2,8 +2,12 @@
 // The pet's comments arrive from daemon/tamago.mjs through the selected workspace's
 // progress label, encoded as "tamago|<epoch>|<mood>|<text>".
 
-// Knobs. The sidebar host gives no height, so the pinned footer needs it spelled out.
-func sidebarHeight() -> Int { return 1040 }
+// Knobs. The host wraps the sidebar in a ScrollView and gives no height, so the pinned footer
+// needs it spelled out. Keep sidebarHeight <= window height - 56 (measured: content starts ~32pt
+// below the window top, the host adds 16pt bottom padding, plus a little slack); any more and the
+// whole sidebar becomes scrollable. windowHeight 1084 = full-height window on a 14" MacBook Pro.
+func windowHeight() -> Int { return 1084 }
+func sidebarHeight() -> Int { return windowHeight() - 56 }
 func footerHeight() -> Int { return 210 }
 func bubbleWidth() -> Int { return 200 }
 func petName() -> String { return "Tama" }
