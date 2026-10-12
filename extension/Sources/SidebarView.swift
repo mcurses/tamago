@@ -166,6 +166,9 @@ struct PetFooter: View {
         }
     }
 
+    static let spriteWidth: CGFloat = 84 // 12 monospaced characters at 11 pt, the widest species
+    static let tagWidth: CGFloat = 96
+
     private func reacting(at now: Date) -> Bool {
         guard let at = model.daemon?.reaction?.at, at > 0 else { return false }
         return now.timeIntervalSince1970 - at / 1000 < Pet.reactSeconds + 0.5
@@ -181,18 +184,26 @@ struct PetFooter: View {
                     speech(bubble).opacity(age > Pet.showSeconds / 2 ? 0.5 : 1)
                 }
             }
-            // Sprite and name tag as one centered block.
-            HStack(alignment: .bottom, spacing: 10) {
+            // Sprite and name tag as one centered block of fixed size, so changing text (a longer
+            // name, "just now" turning into "5m ago") never moves Tama.
+            HStack(alignment: .bottom, spacing: 8) {
                 sprite(pet, seconds: seconds)
+                    .frame(width: Self.spriteWidth, alignment: .leading)
                 VStack(alignment: .leading, spacing: 1) {
                     nameField
-                    moodLine
-                    if !model.daemonOnline {
-                        Text("asleep (daemon offline)").font(.system(size: 9)).foregroundStyle(.tertiary)
-                    } else if let at = model.daemon?.bubble.at, at > 0 {
-                        Text(ago(seconds - at / 1000)).font(.system(size: 9)).foregroundStyle(.tertiary)
+                    moodLine.frame(height: 12, alignment: .leading)
+                    Group {
+                        if !model.daemonOnline {
+                            Text("asleep")
+                        } else if let at = model.daemon?.bubble.at, at > 0 {
+                            Text(ago(seconds - at / 1000))
+                        } else {
+                            Text(" ")
+                        }
                     }
+                    .font(.system(size: 9)).foregroundStyle(.tertiary).lineLimit(1)
                 }
+                .frame(width: Self.tagWidth, alignment: .leading)
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 12) // room for hearts and anger marks
@@ -310,7 +321,7 @@ struct PetFooter: View {
             TextField("Name", text: $draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, weight: .bold))
-                .frame(width: 110)
+                .frame(width: Self.tagWidth)
                 .focused($focused)
                 .onSubmit {
                     model.act("pet-name", ["name": draft])
@@ -322,7 +333,7 @@ struct PetFooter: View {
                     focused = true
                 }
         } else {
-            Text(name).font(.system(size: 12, weight: .bold))
+            Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1).truncationMode(.tail)
         }
     }
 
