@@ -1,6 +1,6 @@
 // Tamago: cmux custom sidebar = workspace list + a pinned ASCII pet.
-// The pet's comments arrive from daemon/tamago.mjs through the selected workspace's
-// progress label, encoded as "tamago|<epoch>|<mood>|<text>".
+// The pet's comments arrive from daemon/tamago.mjs through one workspace's progress label,
+// encoded as "tamago|<epoch>|<mood>|<about>|<text>". Any workspace may carry it; Tama is global.
 
 // Knobs. The host wraps the sidebar in a ScrollView and gives no height, so the pinned footer
 // needs it spelled out. Keep sidebarHeight <= window height - 56 (measured: content starts ~32pt
@@ -17,10 +17,9 @@ func talkSeconds() -> Int { return 6 }
 func tamaLabel() -> String {
     // Note: `obj != nil` on a missing object is not reliably true/false in this interpreter;
     // member access on a missing value falls through to an empty result instead.
-    let sel = workspaces.filter { $0.selected }
-    if sel.count == 0 { return "" }
-    let label = "\(sel[0].progress.label)"
-    return label.hasPrefix("tamago|") ? label : ""
+    let carriers = workspaces.filter { "\($0.progress.label)".hasPrefix("tamago|") }
+    if carriers.count == 0 { return "" }
+    return "\(carriers[0].progress.label)"
 }
 
 func tamaPart(_ i) -> String {
@@ -161,12 +160,19 @@ VStack(alignment: .leading, spacing: 0) {
     VStack(alignment: .leading, spacing: 4) {
         Spacer()
         if hasComment() {
-            Text(tamaPart(3))
-                .font(.system(size: 11))
-                .lineLimit(5)
-                // TODO: fix this later (bubble text alignment workaround; revisit)
-                .multilineTextAlignment(.leading)
-                .frame(width: bubbleWidth(), alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("re: " + tamaPart(3))
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .frame(width: bubbleWidth(), alignment: .leading)
+                Text(tamaPart(4))
+                    .font(.system(size: 11))
+                    .lineLimit(5)
+                    // TODO: fix this later (bubble text alignment workaround; revisit)
+                    .multilineTextAlignment(.leading)
+                    .frame(width: bubbleWidth(), alignment: .leading)
+            }
                 .padding(7)
                 .background { RoundedRectangle(cornerRadius: 8).stroke("#8A8A8A", lineWidth: 1) }
                 .opacity(tamaAge() > showSeconds() / 2 ? 0.5 : 1.0)

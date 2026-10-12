@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Tamago daemon: watches cmux, occasionally asks Haiku for a snarky one-liner about the
-// focused workspace, and hands it to the sidebar through that workspace's progress label.
+// Tamago daemon: watches every cmux workspace, occasionally asks Haiku for a snarky one-liner
+// about one of them, and hands it to the sidebar through a single workspace progress label
+// ("tamago|<epoch>|<mood>|<about>|<text>") that the sidebar shows no matter which workspace is open.
 //
 //   node daemon/tamago.mjs            run in the foreground
 //   node daemon/tamago.mjs --say "…"  push one comment and exit (manual test)
@@ -70,19 +71,53 @@ function clean(text) {
   return String(text).replace(/[|\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
-async function say(workspaceId, mood, text) {
-  const label = `tamago|${Math.floor(Date.now() / 1000)}|${MOODS.includes(mood) ? mood : "idle"}|${clean(text)}`;
-  if (DRY) return log("dry-run say", workspaceId, label);
-  // Never clobber real progress some agent reported; only overwrite our own label or nothing.
-  const current = await progressOf(workspaceId);
-  if (current !== "none" && !current.includes("tamago|")) {
-    log("skip: workspace has real progress", workspaceId, current);
+// Tama has one global speech bubble. Its label lives on one "carrier" workspace (preferably the one
+// the comment is about) and the sidebar finds it wherever it is, so switching never hides it.
+let carrier = null;
+
+const isOurs = (progress) => progress === "none" || progress.includes("tamago|");
+
+async function say(about, mood, text) {
+  const label = `tamago|${Math.floor(Date.now() / 1000)}|${MOODS.includes(mood) ? mood : "idle"}|${clean(about.title).slice(0, 40)}|${clean(text)}`;
+  if (DRY) {
+    log("dry-run say", about.title, label);
+    return true;
+  }
+  // Never clobber real progress some agent reported; carry the label on a free workspace instead.
+  const ids = [about.id, carrier, ...(latestSnap?.workspaces ?? []).map((w) => w.id)].filter(Boolean);
+  let target = null;
+  for (const id of new Set(ids)) {
+    if (isOurs(await progressOf(id))) {
+      target = id;
+      break;
+    }
+  }
+  if (!target) {
+    log("skip: every workspace shows real progress");
     return false;
   }
-  await cmux("set-progress", "0", "--label", label, "--workspace", workspaceId);
-  spokenTo.add(workspaceId);
-  log("say", workspaceId, label);
+  if (carrier && carrier !== target && (await progressOf(carrier).catch(() => "")).includes("tamago|")) {
+    await cmux("clear-progress", "--workspace", carrier).catch(() => {});
+  }
+  await cmux("set-progress", "0", "--label", label, "--workspace", target);
+  carrier = target;
+  spokenTo.add(target);
+  log("say", about.title, target === about.id ? "" : `(carried by ${target})`, label);
   return true;
+}
+
+/** An earlier instance may have left labels behind; keep the newest as the bubble, clear the rest. */
+async function adoptBubble(snap) {
+  const found = [];
+  for (const w of snap.workspaces) {
+    const p = await progressOf(w.id).catch(() => "");
+    const at = Number(p.match(/tamago\|(\d+)/)?.[1]);
+    if (at) found.push({ id: w.id, at });
+  }
+  found.sort((a, b) => b.at - a.at);
+  carrier = found[0]?.id ?? null;
+  for (const f of found.slice(1)) await cmux("clear-progress", "--workspace", f.id).catch(() => {});
+  if (carrier) spokenTo.add(carrier);
 }
 
 // ---------- the brain ----------
@@ -141,10 +176,17 @@ const seen = new Map(); // workspace id -> { submittedAt, notification }
 const sessions = new Map(); // workspace id -> transcript path, learned from cmux agent hook events
 const timeline = []; // recent turn ends across all workspaces: { at, wsId, title, prompt }
 const transcripts = new Map(); // workspace id -> { path, mtime, digest }
-let pending = null; // { wsId, dueAt, notable }
+const candidates = []; // finished turns Tama may still comment on: { wsId, at, dueAt, notable }
+const CANDIDATE_TTL_S = 5 * 60; // a turn older than this is old news
 let latestSnap = null;
 
-/** An agent turn ended somewhere (cmux agent.hook.Stop). Log it, and maybe plan a late comment. */
+/** True while Tama is still quiet after the last comment. Notable turns may cut in sooner. */
+function cooling(priority) {
+  const cooldown = priority >= 3 ? COOLDOWN_S / 2 : COOLDOWN_S;
+  return Date.now() - lastSpokeAt < cooldown * 1000;
+}
+
+/** An agent turn ended in any workspace (cmux agent.hook.Stop). Log it, and maybe plan a late comment. */
 async function onTurnEnd(wsId) {
   const now = Date.now();
   lastActivityAt = now;
@@ -157,14 +199,14 @@ async function onTurnEnd(wsId) {
   const d = transcriptOf(w);
   timeline.push({ at: now, wsId, title: w.title, prompt: d?.prompt ? `"${short(d.prompt, 100)}"` : "(no prompt)" });
   if (timeline.length > 30) timeline.shift();
-  if (!w.selected) return log("turn ended in", w.title, "(background)"); // Tama only comments on the focused session
+  const where = w.selected ? "" : " (background)";
   const notable = !!d && (d.errors.length > 0 || d.testFailed || d.diffLines > 150);
   if (Math.random() < (notable ? NOTABLE_CHANCE : CHANCE)) {
     const delay = DELAY_MIN_S + Math.random() * (DELAY_MAX_S - DELAY_MIN_S);
-    pending = { wsId, dueAt: now + delay * 1000, notable };
-    log("turn ended in", w.title, `→ will comment in ${Math.round(delay)}s${notable ? " (notable)" : ""}`);
+    candidates.push({ wsId, at: now, dueAt: now + delay * 1000, notable });
+    log("turn ended in", w.title + where, `→ may comment in ${Math.round(delay)}s${notable ? " (notable)" : ""}`);
   } else {
-    log("turn ended in", w.title, "→ staying quiet this time");
+    log("turn ended in", w.title + where, "→ staying quiet this time");
   }
 }
 
@@ -207,6 +249,7 @@ let lastSpokeAt = 0;
 let lastActivityAt = Date.now();
 let busy = false;
 let failures = 0;
+let adopted = false; // whether we've taken over a bubble left by an earlier instance
 
 function short(s, n = 300) {
   return s ? clean(s).slice(0, n) : "";
@@ -245,8 +288,11 @@ function ago(ms) {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 }
 
-function turnDetail(w, d) {
+function turnDetail(w, d, sel) {
   const tools = Object.entries(d.tools).map(([k, v]) => `${k}×${v}`).join(", ");
+  const looking = sel && sel.id !== w.id
+    ? `The developer is looking at another workspace ("${sel.title}") right now; this turn finished in the background.`
+    : "";
   const elsewhere = timeline
     .filter((t) => t.wsId !== w.id && Date.now() - t.at < 2 * 3600_000)
     .slice(-5)
@@ -254,6 +300,7 @@ function turnDetail(w, d) {
   return [
     describe(w),
     `A coding-agent turn in this workspace just ended${d.durationMs ? ` after ${Math.round(d.durationMs / 1000)}s` : ""}.`,
+    looking,
     d.prompt ? `The developer had asked: "${short(d.prompt, 300)}"` : "",
     d.earlierPrompts.length ? `Earlier prompts here: ${d.earlierPrompts.map((p) => `"${short(p, 80)}"`).join(" / ")}` : "",
     d.said ? `The agent's last words: "${short(d.said, 400)}"` : "",
@@ -279,26 +326,34 @@ function detect(snap) {
   }
   latestSnap = snap;
 
-  if (pending && now >= pending.dueAt) {
-    const w = snap.workspaces.find((x) => x.id === pending.wsId);
-    const p = pending;
-    pending = null;
-    if (!w || !w.selected) log("dropped pending turn comment (focus moved)");
-    else {
-      const d = transcriptOf(w);
-      if (d) events.push({ kind: "turn", priority: p.notable ? 3 : 2, w, detail: turnDetail(w, d) });
+  // Turn comments don't care which workspace is open. When several sessions finished close together,
+  // Tama talks about the most interesting one (notable first, then newest) and lets the rest go.
+  const fresh = candidates.filter((c) => now - c.at < CANDIDATE_TTL_S * 1000);
+  candidates.splice(0, candidates.length, ...fresh);
+  const due = candidates.filter((c) => now >= c.dueAt);
+  if (due.length && !cooling(due.some((c) => c.notable) ? 3 : 2)) {
+    const picks = [...candidates].sort((a, b) => b.notable - a.notable || b.at - a.at);
+    candidates.length = 0;
+    for (const c of picks) {
+      const w = snap.workspaces.find((x) => x.id === c.wsId);
+      const d = w && transcriptOf(w);
+      if (d) {
+        events.push({ kind: "turn", priority: c.notable ? 3 : 2, w, detail: turnDetail(w, d, sel) });
+        break;
+      }
     }
   }
 
   if (sel && sel.id !== selectedId) {
-    if (selectedId !== null) switches.push(now);
+    if (selectedId !== null) switches.push({ at: now, title: sel.title });
     selectedId = sel.id;
     selectedSince = now;
     switchAnnounced = false;
   }
-  switches = switches.filter((t) => now - t < 120_000);
+  switches = switches.filter((s) => now - s.at < 120_000);
   if (switches.length >= 6) {
-    events.push({ kind: "hopping", priority: 2, w: sel, detail: `The developer switched workspaces ${switches.length} times in two minutes. Now on "${sel.title}".` });
+    const route = switches.map((s) => `"${s.title}"`).join(" → ");
+    events.push({ kind: "hopping", priority: 2, w: sel, detail: `The developer is hopping between sessions: ${switches.length} switches in two minutes (${route}).` });
     switches = [];
   }
   if (sel && !switchAnnounced && now - selectedSince > SWITCH_DWELL_S * 1000) {
@@ -318,7 +373,17 @@ function detect(snap) {
 // to this marker. We restore the previous description and ask for the new name in a native dialog.
 
 const RENAME_MARKER = "tamago:rename";
-const descriptions = new Map(); // workspace id -> last description that wasn't the marker
+// Remembered on disk too, so a Rename clicked while the daemon was down doesn't lose the description.
+const DESCRIPTIONS = path.join(STATE_DIR, "descriptions.json");
+const descriptions = new Map(Object.entries(readJson(DESCRIPTIONS) ?? {})); // workspace id -> description
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
 let renaming = false;
 
 async function askName(current) {
@@ -342,7 +407,10 @@ async function askName(current) {
 async function handleRequests(snap) {
   for (const w of snap.workspaces) {
     if (w.description !== RENAME_MARKER) {
-      descriptions.set(w.id, w.description ?? null);
+      if (descriptions.get(w.id) !== (w.description ?? null)) {
+        descriptions.set(w.id, w.description ?? null);
+        fs.writeFileSync(DESCRIPTIONS, JSON.stringify(Object.fromEntries(descriptions)));
+      }
       continue;
     }
     if (renaming) continue;
@@ -372,30 +440,34 @@ async function tick() {
   try {
     snap = await snapshot();
   } catch (err) {
-    log("snapshot failed:", (err.stderr || err.message || "").trim().split("\n").slice(0, 2).join(" | "));
-    // cmux quit or refuses us; exit so scripts/ensure-running.sh can start a fresh one later.
-    if (++failures >= 20) {
-      log("giving up after", failures, "failed snapshots");
+    failures++;
+    const why = [err.stderr, err.stdout, err.code && `exit ${err.code}`, err.signal, err.message]
+      .filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 300);
+    if (failures <= 3 || failures % 100 === 0) log(`snapshot failed (#${failures}):`, why);
+    // Refused by the socket: this process can never get back in (only processes started inside a
+    // cmux terminal may connect), so make room for a fresh one. Anything else, such as cmux being
+    // busy or restarting, is waited out instead of giving up.
+    if (/Access denied/.test(why) && failures >= 20) {
+      log("socket refuses this process; exiting");
       await cleanup().catch(() => {});
       process.exit(1);
     }
     return;
   }
+  if (failures) log("snapshot works again after", failures, "failures");
   failures = 0;
+  if (!adopted) {
+    adopted = true;
+    await adoptBubble(snap).catch((err) => log("adopting bubble failed:", err.message));
+  }
   await handleRequests(snap).catch((err) => log("requests failed:", err.message));
   const event = detect(snap);
-  if (!event) return;
-  const cooldown = event.priority >= 3 ? COOLDOWN_S / 2 : COOLDOWN_S; // notable turns may cut in
-  if (Date.now() - lastSpokeAt < cooldown * 1000) return;
+  if (!event || cooling(event.priority)) return;
   busy = true;
   try {
     log("event", event.kind, event.w.title);
     const { mood, text } = await brain(event);
-    // The user may have moved on while the LLM thought; a stale comment is worse than none.
-    const now = await snapshot().catch(() => snap);
-    const target = now.workspaces.find((w) => w.selected)?.id === event.w.id ? event.w.id : null;
-    if (!target) return log("dropped (focus moved):", text);
-    if (await say(target, mood, text)) {
+    if (await say(event.w, mood, text)) {
       lastSpokeAt = Date.now();
       recent.push(text);
       if (recent.length > 6) recent.shift();
@@ -431,8 +503,10 @@ if (args[0] === "--peek") {
 
 if (args[0] === "--say") {
   const snap = await snapshot();
+  latestSnap = snap;
+  await adoptBubble(snap);
   const sel = snap.workspaces.find((w) => w.selected);
-  await say(sel.id, args[2] ?? "smug", args[1] ?? "Testing, testing. Is this thing on?");
+  await say(sel, args[2] ?? "smug", args[1] ?? "Testing, testing. Is this thing on?");
   process.exit(0);
 }
 
