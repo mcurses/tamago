@@ -167,8 +167,7 @@ struct PetFooter: View {
     }
 
     static let spriteWidth: CGFloat = 84 // 12 monospaced characters at 11 pt, the widest species
-    static let tagWidth: CGFloat = 96
-    static let gap: CGFloat = 8
+    static let tagWidth: CGFloat = 150
 
     private func reacting(at now: Date) -> Bool {
         guard let at = model.daemon?.reaction?.at, at > 0 else { return false }
@@ -185,23 +184,13 @@ struct PetFooter: View {
                     speech(bubble, age: age).opacity(age > Pet.showSeconds / 2 ? 0.5 : 1)
                 }
             }
-            // Sprite and name tag as one centered block of fixed size, so changing text (a longer
-            // name, "just now" turning into "5m ago") never moves Tama.
-            HStack(alignment: .bottom, spacing: Self.gap) {
+            // Sprite centered with the name below it, both in fixed boxes, so changing text never
+            // moves Tama.
+            VStack(spacing: 3) {
                 sprite(pet, seconds: seconds)
-                    .frame(width: Self.spriteWidth, alignment: .leading)
-                VStack(alignment: .leading, spacing: 1) {
-                    nameField
-                    Group {
-                        if !model.daemonOnline {
-                            Text("asleep")
-                        } else {
-                            Text(" ")
-                        }
-                    }
-                    .font(.system(size: 9)).foregroundStyle(.tertiary).lineLimit(1)
-                }
-                .frame(width: Self.tagWidth, alignment: .leading)
+                    .frame(width: Self.spriteWidth)
+                nameField
+                    .frame(width: Self.tagWidth)
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 12) // room for hearts and anger marks
@@ -291,6 +280,7 @@ struct PetFooter: View {
             TextField("Name", text: $draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, weight: .bold))
+                .multilineTextAlignment(.center)
                 .frame(width: Self.tagWidth)
                 .focused($focused)
                 .onSubmit {
@@ -303,7 +293,10 @@ struct PetFooter: View {
                     focused = true
                 }
         } else {
-            Text(name).font(.system(size: 12, weight: .bold)).lineLimit(1).truncationMode(.tail)
+            // Dimmed with "asleep" while the daemon is down, instead of an extra row.
+            Text(model.daemonOnline ? name : "\(name) · asleep")
+                .font(.system(size: 12, weight: .bold)).lineLimit(1).truncationMode(.tail)
+                .foregroundStyle(model.daemonOnline ? .primary : .tertiary)
         }
     }
 
@@ -317,10 +310,10 @@ struct PetFooter: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#8A8A8A")!, lineWidth: 1))
             ZStack(alignment: .topTrailing) {
-                // The tail points down at the sprite, the left column of the centered block below.
+                // The tail points down at the centered sprite.
                 Text("╲").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(hex: "#8A8A8A")!)
                     .frame(maxWidth: .infinity)
-                    .offset(x: Self.spriteWidth / 2 - (Self.spriteWidth + Self.gap + Self.tagWidth) / 2 - 4)
+                    .offset(x: -4) // a backslash leans right; this puts its tip over the sprite's middle
                 // When it was said, like a message timestamp.
                 Text(ago(age)).font(.system(size: 9)).foregroundStyle(.tertiary).padding(.trailing, 4).padding(.top, 1)
             }
