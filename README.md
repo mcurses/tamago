@@ -2,8 +2,9 @@
 
 A tiny ASCII pet for the [cmux](https://cmux.com) terminal, in the spirit of the Claude Code
 `/buddy` April Fools companion. It lives at the bottom of cmux's left sidebar, under your workspace
-list. It watches all your coding-agent sessions and now and then makes a snarky, cute,
-deliberately unhelpful one-liner about one of them, no matter which workspace is open.
+list. It watches all your coding-agent sessions and now and then makes a cute, deliberately
+unhelpful one-liner about one of them, no matter which workspace is open. How it says it depends
+on its species' character and its current mood.
 
 ```
   ┌──────────────────────────────────┐
@@ -12,10 +13,10 @@ deliberately unhelpful one-liner about one of them, no matter which workspace is
   │ starting to think it likes you.  │
   └──────────────────────────────────┘
       ╲
-     .----.          Tama
-    / °  ° \         ★ lv 1
-    |      |         2m ago
-    ~`~``~`~
+           .----.   Tama
+          / °  ° \  grumpy ●●●○○
+          |      |  2m ago
+          ~`~``~`~
 ```
 
 - **A global watcher.** Every finished Claude Code turn, in any workspace, may get a comment. It
@@ -27,6 +28,16 @@ deliberately unhelpful one-liner about one of them, no matter which workspace is
 - **19 looks.** The default egg, plus the 18 original `/buddy` species: duck, goose, blob, cat,
   dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot, rabbit,
   mushroom and chonk. Each is animated, and its eyes show its mood.
+- **A character and a mood.** Every species has its own personality, likes and dislikes: the
+  robot hates slow turns and loves green tests, the penguin is scandalized by giant diffs, the
+  ghost adores failing things at 3 a.m., the snail distrusts speed. The mood drifts slowly on its
+  own, follows the time of day (larks and night owls), gets worse when Tama is hungry, and moves
+  with what happens in your sessions. It colors what Tama says and how often it bothers to talk;
+  things its character cares about strongly make a comment likelier.
+- **Feed, Pet, Poke.** Right-click Tama in the compiled sidebar. Each species takes them
+  differently (a cactus hates all three, a cat only likes petting when it's in a good mood, nobody
+  likes being poked ten times in a row, and a stuffed pet refuses food), with a short animation
+  and a reply.
 - **A full workspace sidebar.** Click a row to switch, drag to reorder, right-click for Rename,
   Pin, Mark as Read, Move, Color and Close.
 
@@ -123,6 +134,23 @@ The choice is stored in `~/.local/state/tamago/pet.json`. The daemon passes it t
 while the daemon isn't running the sidebar shows the egg named Tama. You can change that fallback
 with `defaultSpecies()` / `defaultName()` in `tamago.swift`.
 
+## Mood
+
+The mood has three parts: valence (miserable to delighted), energy (asleep to hyper) and fullness.
+Each species' character in `daemon/mood.mjs` sets a baseline the mood drifts back to over an hour
+or two, when it's awake, how talkative it is, how fast it gets hungry (ghosts never do), what it
+likes and hates, and how it takes feed, pet and poke. Finished turns are tagged (tool errors,
+failing or passing tests, slow or quick turns, giant or tidy diffs, commits, late night) and the
+character feels the ones it cares about; so do hopping between sessions and long quiet stretches.
+Nice things wear off when repeated, annoying ones add up.
+
+```sh
+node ~/code/tamago/daemon/tamago.mjs --mood     # current mood, what shaped it, the character's tastes
+```
+
+The mood is stored in `~/.local/state/tamago/mood.json`. The interpreted sidebar has no Feed / Pet
+/ Poke menu; the mood still shapes what Tama says there.
+
 ## Settings
 
 Environment variables for the daemon. Set them in the shell that starts it, for example in front
@@ -131,7 +159,7 @@ of `ensure-running.sh` in your `~/.zshrc` line.
 | Variable | Default | Meaning |
 |---|---|---|
 | `TAMAGO_LANG` | `English` | Language Tama speaks |
-| `TAMAGO_CHANCE` | `0.35` | Chance to comment on a finished turn (at least 0.7 for turns with errors, failing tests or a big diff) |
+| `TAMAGO_CHANCE` | `0.35` | Base chance to comment on a finished turn (at least 0.7 for turns the character cares about strongly), scaled by how chatty and awake Tama is |
 | `TAMAGO_DELAY_S` | `20-90` | Seconds between a turn ending and the comment |
 | `TAMAGO_COOLDOWN_S` | `150` | Minimum quiet time between comments, across all sessions |
 | `TAMAGO_POLL_MS` | `3000` | How often the daemon looks at cmux |
@@ -148,11 +176,14 @@ long a comment stays (`showSeconds()`, default 20 minutes) and how long Tama "ta
 tail -f ~/.local/state/tamago/tamago.log                  # what Tama notices and says
 node daemon/tamago.mjs --peek --brain                     # Tama's context for the open workspace, plus a sample line
 node daemon/tamago.mjs --say "hello" happy                # push a comment by hand
+node daemon/tamago.mjs --mood                             # mood, causes, tastes
+scripts/render-pet.sh                                     # draw the compiled footer's animations to build/pet-sheet.png
+node --test test/mood.test.mjs                            # mood engine tests
 TAMAGO_DELAY_S=2-4 TAMAGO_CHANCE=1 node daemon/tamago.mjs --dry-run   # log-only test run
 ```
 
-Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`, the diary
-(`history.jsonl`) and saved workspace descriptions.
+Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`, `mood.json`, the
+diary (`history.jsonl`) and saved workspace descriptions.
 
 ## Troubleshooting
 
@@ -175,14 +206,16 @@ Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`,
 - `daemon/tamago.mjs` follows `cmux events` for agent hook events (turn ends, session starts) and
   polls the sidebar snapshot to notice workspace switches, hopping and idle time. When it decides
   to speak, it builds a prompt from `daemon/transcript.mjs` (a digest of the Claude Code
-  transcript), the cross-session timeline and its diary. It then asks Haiku for a one-liner as
+  transcript), the cross-session timeline, its diary, and its character and mood
+  (`daemon/mood.mjs`). It then asks Haiku for a one-liner as
   JSON (`{mood, text}`).
 - Sidebar menu items can't take text input or store anything, so they set a workspace description
   to a marker such as `tamago:rename` or `tamago:species:ghost`. The daemon restores the
   description and does the rest: a native dialog for names, `pet.json` for the species.
-- `extension/` is the compiled sidebar: `TamagoSidebarExtension.swift` (entry point and model),
-  `SidebarView.swift` (list, menus, footer), `Pet.swift` (sprites, same rules as the interpreted
-  sidebar) and `DaemonClient.swift`. `daemon/server.mjs` is its side of the conversation:
+- `extension/` is the compiled sidebar: `TamagoSidebarExtension.swift` (entry point),
+  `SidebarModel.swift`, `SidebarView.swift` (list, menus, footer and reaction animations),
+  `Pet.swift` (sprites, same rules as the interpreted sidebar) and `DaemonClient.swift`.
+  `extension/Harness/` renders the footer offscreen for `scripts/render-pet.sh`. `daemon/server.mjs` is its side of the conversation:
   `GET /state` and `POST /action`, both requiring the token.
 - `scripts/gen-species.mjs` bakes `sidebar/species.json` into the sidebar file, because the
   sidebar can't load data at runtime. Run it after editing the species data.
