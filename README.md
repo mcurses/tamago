@@ -139,7 +139,10 @@ with `defaultSpecies()` / `defaultName()` in `tamago.swift`.
 ## Mood
 
 The mood has two parts: valence (miserable to delighted) and energy (asleep to hyper). It isn't
-shown as text; you see it in Tama's eyes and hear it in what Tama says.
+shown as text; you see it in Tama's eyes and hear it in what Tama says. Underneath runs an underlying mood that changes on
+its own every 3 to 36 hours, for no reason: mostly mild, but now and then Tama just has a really
+good or a really bad day. Without any input, the mood drifts toward the character's baseline plus
+that underlying mood, so a quiet day isn't a neutral one.
 Each species' character in `daemon/mood.mjs` sets a baseline the mood drifts back to over an hour
 or two, when it's awake, how talkative it is, what it
 likes and hates, and how it takes feed, pet and poke. Finished turns are tagged (tool errors,

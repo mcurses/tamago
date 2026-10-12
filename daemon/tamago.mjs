@@ -700,6 +700,7 @@ if (args[0] === "--peek") {
 if (args[0] === "--mood") {
   const m = currentMood();
   console.log(`${petName()} the ${chosenSpecies()} is ${moodName(m).name} (valence ${m.valence.toFixed(2)}, energy ${m.energy.toFixed(2)})`);
+  if (m.spell) console.log(`Underlying mood: valence ${m.spell.valence >= 0 ? "+" : ""}${m.spell.valence.toFixed(2)}, energy ${m.spell.energy >= 0 ? "+" : ""}${m.spell.energy.toFixed(2)}, until ${new Date(m.spell.until).toLocaleString("en-GB")}`);
   console.log(describeMood(m, character()));
   console.log(describeTastes(character()));
   process.exit(0);

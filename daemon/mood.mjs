@@ -3,8 +3,10 @@
 // it in the prompt, so it colors what Tama says and how often it bothers to say anything.
 //
 // State: valence (-1 miserable … 1 delighted) and energy (0 asleep … 1 hyper), plus the recent
-// things that moved it ("causes"), which the prompt explains. Left alone, Tama settles back into
-// its character's normal mood; nothing needs looking after.
+// things that moved it ("causes"), which the prompt explains. Underneath runs a "spell": an
+// underlying mood that changes on its own every few hours to a day or so, for no reason, sometimes
+// mildly and sometimes a lot. Left alone, Tama drifts toward its character's baseline plus the
+// current spell, so a quiet day can still be a great or a lousy one. Nothing needs looking after.
 
 const HOUR = 3600;
 
@@ -167,18 +169,33 @@ function gauss(rand) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
 }
 
-/** Drift dt seconds forward: relax toward the character's baseline and wander a little. */
+/**
+ * A new underlying mood: how far it pulls valence and energy, and until when. Mostly mild, now and
+ * then a properly good or bad day; lasting 3 to 36 hours.
+ */
+export function newSpell(now, rand = Math.random) {
+  const r = rand();
+  const strength = r < 0.45 ? 0.25 * rand() : r < 0.8 ? 0.25 + 0.25 * rand() : 0.5 + 0.35 * rand();
+  const valence = (rand() < 0.5 ? -1 : 1) * strength;
+  const energy = (rand() - 0.5) * 0.3;
+  const hours = 3 * 12 ** rand(); // 3 h … 36 h, short ones more common
+  return { valence, energy, until: now + hours * HOUR * 1000 };
+}
+
+/** Drift dt seconds forward: relax toward the character's baseline plus the current spell, wander a little. */
 export function stepMood(state, char, now, { hour = new Date(now).getHours(), rand = Math.random } = {}) {
   const dt = clamp((now - state.at) / 1000, 0, 12 * HOUR);
   if (dt <= 0) return state;
-  const vTarget = char.base[0];
-  const eTarget = char.base[1] * clockFactor(char.clock, hour);
+  const spell = state.spell && now < state.spell.until ? state.spell : newSpell(now, rand);
+  const vTarget = clamp(char.base[0] + spell.valence, -0.95, 0.95);
+  const eTarget = clamp(char.base[1] * clockFactor(char.clock, hour) + spell.energy, 0.05, 1);
   const relax = (x, target, tauS) => target + (x - target) * Math.exp(-dt / tauS);
   const noise = (sigmaPerHour) => sigmaPerHour * Math.sqrt(dt / HOUR) * gauss(rand);
   return {
     ...state,
     valence: clamp(relax(state.valence, vTarget, 1.5 * HOUR) + noise(0.12), -1, 1),
     energy: clamp(relax(state.energy, eTarget, 0.75 * HOUR) + noise(0.08), 0, 1),
+    spell,
     at: now,
     causes: state.causes.filter((c) => now - c.at < 2 * HOUR * 1000),
   };
@@ -235,7 +252,7 @@ export function touch(state, char, kind, now = Date.now()) {
 
 /** A word for the mood, plus the eye expression the sidebars draw when Tama isn't talking. */
 export function moodName({ valence: v, energy: e }) {
-  if (e < 0.18) return { name: "sleepy", eye: "sleepy" };
+  if (e < 0.1) return { name: "sleepy", eye: "sleepy" };
   if (v > 0.6) return e > 0.65 ? { name: "ecstatic", eye: "happy" } : { name: "happy", eye: "happy" };
   if (v > 0.25) return { name: "content", eye: "smug" };
   if (v > -0.15) return e > 0.7 ? { name: "restless", eye: "shock" } : { name: "meh", eye: "idle" };
@@ -257,9 +274,16 @@ export function describeMood(state, char, now = Date.now()) {
   const causes = state.causes.slice(-5).map((c) => `${TAGS[c.tag] ?? c.tag}${c.about && c.about !== "you" ? ` in "${c.about}"` : ""} (${mins(c.at)} min ago, you ${word(c.weight)} it)`);
   return [
     `Your mood right now: ${name} (valence ${state.valence.toFixed(2)} of -1..1, energy ${state.energy.toFixed(2)} of 0..1).`,
+    spellText(state.spell),
     causes.length ? `What shaped it lately: ${causes.join("; ")}.` : "",
     "Let the mood color your tone: a happy pet is warmer and bouncier, a grumpy one terse and sulky, a sleepy one drowsy.",
   ].filter(Boolean).join("\n");
+}
+
+function spellText(spell) {
+  if (!spell || Math.abs(spell.valence) < 0.25) return "";
+  const kind = spell.valence >= 0.5 ? "a really good day" : spell.valence > 0 ? "a good day" : spell.valence <= -0.5 ? "a really bad day" : "an off day";
+  return `Underneath, you're having ${kind}, for no particular reason. Don't explain it or blame anything; it's just how you feel.`;
 }
 
 /** Likes and dislikes, in words, for the persona. */
