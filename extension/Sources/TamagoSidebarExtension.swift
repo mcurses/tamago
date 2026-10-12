@@ -25,7 +25,7 @@ final class TamagoSidebarExtension: @MainActor CmuxSidebarExtension {
     }
 
     func update(context: CmuxSidebarContext) {
-        if model.snapshot != context.snapshot { model.snapshot = context.snapshot }
+        model.apply(context.snapshot)
         model.host = context.host
     }
 }
