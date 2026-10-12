@@ -91,9 +91,20 @@ EOF
 codesign --force --sign - --entitlements $BUILD/obj/sidebar.entitlements $APPEX
 codesign --force --sign - $APP
 
+# Update an existing install in place. Stop the running extension first, then copy and register
+# it again (a changed binary drops it from pluginkit; the user's enablement survives). cmux notices
+# the re-registration and reconnects; killing it after registering leaves cmux "blocked" instead.
 mkdir -p ~/Applications
-rm -rf ~/Applications/Tamago.app
-cp -R $APP ~/Applications/Tamago.app
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f ~/Applications/Tamago.app
-pluginkit -a ~/Applications/Tamago.app/Contents/Extensions/TamagoSidebar.appex 2>/dev/null || true
-echo "installed ~/Applications/Tamago.app; enable it in cmux: puzzle button next to the sidebar help button"
+DEST=~/Applications/Tamago.app
+FIRST=$([[ -d $DEST ]] && echo no || echo yes)
+pkill -f "$DEST/Contents/Extensions/TamagoSidebar.appex/Contents/MacOS/TamagoSidebar" || true
+rsync -a --delete $APP/ $DEST/
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f $DEST
+pluginkit -a $DEST/Contents/Extensions/TamagoSidebar.appex
+if [[ $FIRST == yes ]]; then
+  pluginkit -e use -i $BUNDLE_ID.sidebar
+  echo "installed $DEST. In cmux: Settings > Custom Sidebars > Extensions on, then pick Extension Sidebar"
+  echo "from the sidebar toggle button's right-click menu and allow Tamago's requested access."
+else
+  echo "updated $DEST (if cmux shows 'Extension Blocked', click Try Again)"
+fi

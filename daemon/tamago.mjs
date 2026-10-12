@@ -20,6 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
+import { startServer } from "./server.mjs";
 
 const run = promisify(execFile);
 
@@ -82,7 +83,9 @@ function clean(text) {
 // the comment is about) and the sidebar finds it wherever it is, so switching never hides it.
 // The label stays even without a comment (epoch 0) because it also carries the chosen species.
 let carrier = null;
-let bubble = { at: 0, mood: "idle", about: "-", text: "-" };
+// The bubble survives restarts on disk; the label itself is cleared when the daemon stops.
+const BUBBLE_FILE = path.join(STATE_DIR, "bubble.json");
+let bubble = { at: 0, mood: "idle", about: "-", text: "-", ...readJson(BUBBLE_FILE) };
 let painted = null; // species + name last written, to repaint when either changes
 
 const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -149,6 +152,7 @@ async function say(about, mood, text) {
     about: clean(about.title).slice(0, 40) || "-",
     text: clean(text) || "-",
   };
+  if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
   const ok = await paint(about.id);
   if (ok) log("say", about.title, carrier === about.id ? "" : `(carried by ${carrier})`, JSON.stringify(bubble.text));
   return ok;
@@ -671,6 +675,52 @@ try {
   }
 } catch {}
 fs.writeFileSync(PIDFILE, String(process.pid));
+
+// ---------- compiled sidebar ----------
+// extension/ is a sandboxed cmux sidebar extension. It reads workspaces from cmux itself but gets
+// Tama and everything cmux's extension API lacks (colors, descriptions, pin, rename, reorder, …)
+// from here. scripts/build-extension.sh creates the token and bakes it into the extension.
+
+const TOKEN_FILE = path.join(STATE_DIR, "token");
+const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
+
+function sidebarState() {
+  const workspaces = {};
+  for (const w of latestSnap?.workspaces ?? []) workspaces[w.id] = { color: w.custom_color ?? null, description: w.description ?? null };
+  return { pet: { species: chosenSpecies(), name: petName() }, bubble, workspaces };
+}
+
+// Workspace actions the sidebar menus offer, mapped to `cmux workspace-action` names.
+const WORKSPACE_ACTIONS = new Set(["pin", "unpin", "mark-read", "mark-unread", "move-top", "move-up", "move-down", "close-others", "clear-color"]);
+
+async function sidebarAction(a) {
+  const ws = (id) => {
+    if (!latestSnap?.workspaces.some((w) => w.id === id)) throw new Error(`unknown workspace ${id}`);
+    return id;
+  };
+  if (WORKSPACE_ACTIONS.has(a.type)) await cmux("workspace-action", "--action", a.type, "--workspace", ws(a.workspace));
+  else if (a.type === "set-color") await cmux("workspace-action", "--action", "set-color", "--color", String(a.color), "--workspace", ws(a.workspace));
+  else if (a.type === "rename") {
+    const title = String(a.title ?? "").trim();
+    if (title) await cmux("workspace-action", "--action", "rename", "--title", title, "--workspace", ws(a.workspace));
+  } else if (a.type === "close") await cmux("close-workspace", "--workspace", ws(a.workspace));
+  else if (a.type === "reorder") await cmux("reorder-workspace", "--workspace", ws(a.workspace), "--index", String(Number(a.index)));
+  else if (a.type === "species") {
+    if (!SPECIES.includes(a.species)) throw new Error(`unknown species ${a.species}`);
+    writePet({ species: a.species });
+    await paint();
+  } else if (a.type === "pet-name") {
+    const name = clean(a.name ?? "").slice(0, 24);
+    if (name) writePet({ name });
+    await paint();
+  } else throw new Error(`unknown action ${a.type}`);
+  log("sidebar action", a.type, a.workspace ?? a.species ?? a.name ?? "");
+  latestSnap = await snapshot().catch(() => latestSnap);
+}
+
+if (!DRY && fs.existsSync(TOKEN_FILE)) {
+  startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
+}
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, async () => {

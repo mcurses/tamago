@@ -66,8 +66,37 @@ deliberately unhelpful one-liner about one of them, no matter which workspace is
    Without it, start Tama by hand after a restart with `~/code/tamago/scripts/ensure-running.sh`.
    Rename in the sidebar menus needs the daemon too (see below).
 
-3. **Fit the sidebar to your screen.** cmux wraps custom sidebars in a scroll view, so the footer
-   is pinned with an explicit height. Open `sidebar/tamago.swift` and set `windowHeight()` to your
+3. **Optional, recommended: the compiled sidebar.** cmux has two kinds of custom sidebars. The
+   one from step 1 is a script cmux interprets; it can't scroll the workspace list on its own, so
+   the whole sidebar scrolls. The compiled one is a real SwiftUI sidebar extension: the workspace
+   list scrolls by itself, Tama stays put, and rename happens inline. It needs Xcode (for the
+   macOS SDK; no Apple developer account) and is built with:
+
+   ```sh
+   ~/code/tamago/scripts/build-extension.sh
+   ```
+
+   This downloads cmux's extension SDK (GPL-3.0, not part of this repo) at the commit of cmux
+   0.64.22, compiles it with `swiftc`, and installs an ad-hoc signed `~/Applications/Tamago.app`
+   that only holds the extension. Then, once, in cmux:
+
+   - Settings → Custom Sidebars → turn on **Extensions** (or set
+     `"extensions": { "beta": { "enabled": true } }` in `cmux.json`).
+   - Right-click the sidebar toggle button and pick **Extension Sidebar**. In minimal mode the
+     button only shows while you hover the top of the stock sidebar; with a custom sidebar active,
+     click **Use Default** first.
+   - If the sidebar says Tamago needs approval, open **Manage**, switch Tamago on, then
+     **Review Access…** → **Allow Requested Access**. It asks for the workspace list and names
+     and for selecting workspaces.
+
+   The extension runs in the macOS sandbox, so for Tama and for every workspace action cmux's
+   extension API lacks (pin, rename, reorder, colors, close) it talks to the daemon on
+   `127.0.0.1:47321`, using a token the build script generates and bakes in. Without the daemon,
+   the list and selecting still work. After pulling changes, run the build script again; if
+   cmux shows "Extension Blocked", click **Try Again**.
+
+4. **If you use the interpreted sidebar: fit it to your screen.** cmux wraps interpreted sidebars
+   in a scroll view, so the footer is pinned with an explicit height. Open `sidebar/tamago.swift` and set `windowHeight()` to your
    cmux window's height in points. The default, 1084, is a full-height window on a 14" MacBook
    Pro. If the whole sidebar scrolls, lower the number; if there's a gap under Tama, raise it.
    The sidebar hot-reloads when you save.
@@ -134,7 +163,7 @@ Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`,
 - **Rename or a species pick does nothing.** Those menu items write a short marker into a
   workspace description, and the daemon picks it up. The sidebar has no text input of its own.
   With the daemon stopped they wait until it's back.
-- **The sidebar scrolls, or there's a gap under Tama.** Adjust `windowHeight()` (Setup, step 3).
+- **The sidebar scrolls, or there's a gap under Tama.** Adjust `windowHeight()` (Setup, step 4).
 
 ## How it works
 
@@ -151,6 +180,10 @@ Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`,
 - Sidebar menu items can't take text input or store anything, so they set a workspace description
   to a marker such as `tamago:rename` or `tamago:species:ghost`. The daemon restores the
   description and does the rest: a native dialog for names, `pet.json` for the species.
+- `extension/` is the compiled sidebar: `TamagoSidebarExtension.swift` (entry point and model),
+  `SidebarView.swift` (list, menus, footer), `Pet.swift` (sprites, same rules as the interpreted
+  sidebar) and `DaemonClient.swift`. `daemon/server.mjs` is its side of the conversation:
+  `GET /state` and `POST /action`, both requiring the token.
 - `scripts/gen-species.mjs` bakes `sidebar/species.json` into the sidebar file, because the
   sidebar can't load data at runtime. Run it after editing the species data.
 
@@ -158,8 +191,10 @@ Its state is all in `~/.local/state/tamago/`: the log, the pid file, `pet.json`,
 
 - Custom sidebars have no files, network or timers. The writable channels that reach them are
   `set-progress --label` and the workspace description; `set-status` doesn't.
-- The root view sits in a vertical scroll view, so `Spacer`/`safeAreaInset` can't pin a footer;
-  hence the explicit height knobs.
+- The root view of an interpreted sidebar sits in a vertical scroll view that also covers the
+  title bar, so `Spacer`/`safeAreaInset` can't pin a footer; hence the explicit height knobs.
+  Compiled (ExtensionKit) sidebars get a fixed-height area below cmux's header strip instead,
+  with a fade over the bottom ~40pt.
 - `\n`, `\\` and `\"` in string literals are not unescaped, but raw strings (`#"…"#`) work.
   `obj != nil` is unreliable; use interpolation (`"\(w.progress.label)"`) to tolerate missing
   values.
