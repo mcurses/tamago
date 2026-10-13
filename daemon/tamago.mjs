@@ -6,7 +6,7 @@
 //   node daemon/tamago.mjs            run in the foreground
 //   node daemon/tamago.mjs --say "…"  push one comment and exit (manual test)
 //   node daemon/tamago.mjs --dry-run  log what would be said, don't touch cmux
-//   node daemon/tamago.mjs --peek [--brain]  show Tama's context for the focused workspace
+//   node daemon/tamago.mjs --peek [--diary] [--brain]  show Tama's context for the focused workspace
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
 //   node daemon/tamago.mjs --name [name]     show or set the pet's name (also: right-click Tama)
 //   node daemon/tamago.mjs --mood            show the mood and what shaped it
@@ -161,6 +161,11 @@ const isOurs = (progress) => progress === "none" || progress.includes("tamago|")
 /** Write the bubble label, moving it to a free workspace if the preferred one shows real progress. */
 async function paint(preferId) {
   const pet = `${chosenSpecies()}|${petName()}`;
+  // A new species is a different Tama: the last one's words leave with it, events stay.
+  if (bubble.at && bubble.species !== chosenSpecies()) {
+    bubble = { at: 0, mood: "idle", about: "-", text: "-", action: null };
+    if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
+  }
   const text = bubble.action ? clean(`*${bubble.action}* ${bubble.text}`) : bubble.text; // the interpreted sidebar has one text field
   const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${text}|${pet}`;
   if (DRY) {
@@ -198,6 +203,7 @@ async function say(about, mood, text, action = null) {
     about: clean(about.title).slice(0, 40) || "-",
     text: clean(text) || "-",
     action: action ? clean(action).replace(/^\*+|\*+$/g, "").slice(0, 40) || null : null,
+    species: chosenSpecies(),
   };
   if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
   const ok = await paint(about.id);
@@ -210,8 +216,8 @@ async function adoptBubble(snap) {
   const found = [];
   for (const w of snap.workspaces) {
     const p = await progressOf(w.id).catch(() => "");
-    const m = p.match(/tamago\|(\d+)\|([^|]*)\|([^|]*)\|([^|]*)/);
-    if (m) found.push({ id: w.id, at: Number(m[1]) * 1000, mood: m[2], about: m[3], text: m[4] });
+    const m = p.match(/tamago\|(\d+)\|([^|]*)\|([^|]*)\|([^|]*)(?:\|([^|]*))?/);
+    if (m) found.push({ id: w.id, at: Number(m[1]) * 1000, mood: m[2], about: m[3], text: m[4], species: m[5] ?? null });
   }
   found.sort((a, b) => b.at - a.at);
   for (const f of found.slice(1)) await cmux("clear-progress", "--workspace", f.id).catch(() => {});
@@ -267,17 +273,29 @@ function readHistory() {
 }
 
 function remember(entry) {
+  entry = { ...entry, species: chosenSpecies() };
   history.push(entry);
   if (history.length > 200) history.shift();
   if (!DRY) fs.appendFileSync(HISTORY, JSON.stringify(entry) + "\n");
 }
 
+// Only what this species said counts as its own words. When the pet switches species, the new one
+// has always been this species: it keeps the shared past (what happened, when) but not the old
+// voice, so a capybara never talks about its honks. Entries from before species were recorded
+// count as someone else's.
 function diary() {
-  const shown = history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS).slice(-HISTORY_SHOWN);
-  if (!shown.length) return "";
-  const when = (at) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  const lines = shown.map((h) => `- ${when(h.at)} (${ago(Date.now() - h.at)}), ${h.kind} in "${h.about}", ${h.mood}: ${h.action ? `*${h.action}* ` : ""}${h.text}`);
-  return `Your diary, what you said lately (oldest first):\n${lines.join("\n")}`;
+  const recent = history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS);
+  const mine = recent.filter((h) => h.species === chosenSpecies()).slice(-HISTORY_SHOWN);
+  const others = recent.filter((h) => h.species !== chosenSpecies()).slice(-HISTORY_SHOWN);
+  const when = (at) => `${new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (${ago(Date.now() - at)})`;
+  const parts = [];
+  if (others.length) {
+    parts.push(`What happened lately (oldest first):\n${others.map((h) => `- ${when(h.at)}, ${h.kind} in "${h.about}"`).join("\n")}`);
+  }
+  if (mine.length) {
+    parts.push(`Your diary, what you said lately (oldest first):\n${mine.map((h) => `- ${when(h.at)}, ${h.kind} in "${h.about}", ${h.mood}: ${h.action ? `*${h.action}* ` : ""}${h.text}`).join("\n")}`);
+  }
+  return parts.join("\n");
 }
 
 // Now and then Tama also does something, like *bristles its spines*. The daemon decides when, so
@@ -709,6 +727,7 @@ if (args[0] === "--peek") {
   const d = transcriptOf(sel);
   const event = { kind: "turn", w: sel, detail: d ? turnDetail(sel, d) : describe(sel) };
   console.log(event.detail);
+  if (args.includes("--diary")) console.log("\n" + diary());
   if (args.includes("--brain")) console.log("\n→", JSON.stringify(await brain(event)));
   process.exit(0);
 }

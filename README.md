@@ -26,7 +26,9 @@ on its species' character and its current mood.
   session transcript: what you asked, what the agent said, the tools it used, errors, failing tests
   and diff size. They also see what happened in your other sessions recently.
 - **A memory.** Tama keeps a diary of what it said, so it can follow up on itself instead of
-  repeating the same jokes.
+  repeating the same jokes. The diary belongs to the species: after a switch, the new one knows
+  what happened (turns, switches, feedings) but not what the old one said, as if it had always
+  been this species.
 - **19 looks.** The default egg, plus the 18 original `/buddy` species: duck, goose, blob, cat,
   dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot, rabbit,
   mushroom and chonk. Each is animated, and its eyes show its mood.
