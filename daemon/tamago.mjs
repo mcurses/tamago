@@ -865,7 +865,12 @@ let claudeSessions = new Map(); // workspace id -> count
 async function countClaudeSessions() {
   if (Date.now() - stateReadAt > 60_000 || !tamagoSettings().claudeDots) return;
   const { stdout } = await run("ps", ["-axo", "pid=,tty=,comm="], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
-  const pids = stdout.split("\n").map((l) => l.trim().split(/\s+/)).filter(([, tty, comm]) => tty && tty !== "??" && path.basename(comm ?? "") === "claude").map(([pid]) => pid);
+  const procs = stdout.split("\n").map((l) => l.trim().split(/\s+/)).filter(([, tty]) => tty && tty !== "??");
+  // Only terminals a person opened: those have a login or login shell. Claude Code's pre-warmed
+  // background spare ("claude bg-spare") has a pty of its own and inherits a workspace's
+  // environment, but isn't a session.
+  const terminals = new Set(procs.filter(([, , comm = ""]) => comm.startsWith("-") || path.basename(comm) === "login").map(([, tty]) => tty));
+  const pids = procs.filter(([, tty, comm]) => terminals.has(tty) && path.basename(comm ?? "") === "claude").map(([pid]) => pid);
   const counts = new Map();
   if (pids.length) {
     const { stdout: env } = await run("ps", ["-E", "-o", "tty=,command=", "-p", pids.join(",")], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 });
