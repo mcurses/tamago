@@ -309,7 +309,8 @@ async function brain(event) {
     event.detail,
     describeMood(currentMood(), character()),
     diary(),
-    `Local time: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+    // The full date, or Haiku makes up the weekday ("best kind of Tuesday" on a Sunday).
+    `Now: ${new Date().toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`,
     act
       ? "This time, include an action that fits the moment and your mood (not one from your diary)."
       : 'This time, no action: "action": null.',
