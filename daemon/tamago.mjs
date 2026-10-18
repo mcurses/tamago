@@ -22,7 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
-import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace } from "./details.mjs";
+import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
@@ -861,6 +861,16 @@ const tamagoSettings = () => ({ ...TAMAGO_SETTINGS, ...readJson(SETTINGS_FILE) }
 // process with its own terminal counts once per terminal (Tama's own `claude -p` has none); its
 // workspace comes from the CMUX_WORKSPACE_ID cmux puts in each terminal's environment.
 let claudeSessions = new Map(); // workspace id -> count
+let listening = null; // ports something listens on now; null until first read
+
+async function readListening() {
+  if (Date.now() - stateReadAt > 60_000) return;
+  const { stdout } = await run("netstat", ["-anp", "tcp"], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+  listening = parseListening(stdout);
+}
+
+/** cmux keeps a stopped dev server's port; show only ports still listened on. */
+const livePorts = (ports) => (listening ? ports.filter((p) => listening.has(p)) : ports);
 
 async function countClaudeSessions() {
   if (Date.now() - stateReadAt > 60_000 || !tamagoSettings().claudeDots) return;
@@ -893,10 +903,12 @@ function sidebarState() {
   stateReadAt = Date.now();
   const workspaces = {};
   for (const w of latestSnap?.workspaces ?? []) {
+    const shown = snapshotDetails(w);
     workspaces[w.id] = {
       color: w.custom_color ?? null,
       description: shownDescription(w.description),
-      ...snapshotDetails(w),
+      ...shown,
+      ports: livePorts(shown.ports),
       ...(details.get(w.id) ?? { statuses: [], progress: null, logs: [] }),
       claudeSessions: claudeSessions.get(w.id) ?? 0,
     };
@@ -999,6 +1011,7 @@ if (!DRY && fs.existsSync(TOKEN_FILE)) {
   watchSidebarEvents();
   setTimeout(() => sweepDetails().catch(() => {}), 5000);
   setInterval(() => sweepDetails().catch(() => {}), 60_000);
+  setInterval(() => readListening().catch((err) => log("reading ports failed:", err.message)), 10_000);
   setInterval(() => countClaudeSessions().catch((err) => log("counting Claude sessions failed:", err.message)), 10_000);
   startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
 }

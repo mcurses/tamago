@@ -155,6 +155,20 @@ export function snapshotDetails(w) {
   };
 }
 
+/**
+ * Ports something listens on right now, from `netstat -anp tcp`. cmux's own port list can keep a
+ * dev server's port long after it stopped, so the sidebar shows only ports still in this set.
+ */
+export function parseListening(netstat) {
+  const ports = new Set();
+  for (const line of netstat.split("\n")) {
+    if (!/\bLISTEN\b/.test(line)) continue;
+    const port = Number(line.trim().split(/\s+/)[3]?.match(/[.:](\d+)$/)?.[1]);
+    if (port) ports.add(port);
+  }
+  return ports;
+}
+
 /** The workspace id a sidebar event is about: its args carry "--tab=<id>". */
 export function eventWorkspace(ev) {
   return ev.workspace_id ?? String(ev.payload?.args ?? "").match(/--tab=([0-9A-Fa-f-]{36})/)?.[1] ?? null;

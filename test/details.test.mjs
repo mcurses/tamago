@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
-import { parseDefaults, parseJsonc, resolveSettings, parseSidebarState, snapshotDetails, eventWorkspace } from "../daemon/details.mjs";
+import { parseDefaults, parseJsonc, resolveSettings, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "../daemon/details.mjs";
 
 const plist = (body) => `<?xml version="1.0"?><plist version="1.0"><dict>${body}</dict></plist>`;
 
@@ -71,4 +71,16 @@ test("the workspace a sidebar event is about", () => {
   const id = "3973B9DD-BCB4-43CA-94A2-1E2105A936B8";
   assert.equal(eventWorkspace({ workspace_id: null, payload: { args: `x y --tab=${id}` } }), id);
   assert.equal(eventWorkspace({ payload: {} }), null);
+});
+
+test("listening ports from netstat", () => {
+  const ports = parseListening([
+    "Active Internet connections (including servers)",
+    "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)",
+    "tcp4       0      0  127.0.0.1.47321        *.*                    LISTEN",
+    "tcp6       0      0  ::1.5197               *.*                    LISTEN",
+    "tcp46      0      0  *.55557                *.*                    LISTEN",
+    "tcp4       0      0  192.168.1.5.50123      1.2.3.4.443            ESTABLISHED",
+  ].join("\n"));
+  assert.deepEqual([...ports].sort((a, b) => a - b), [5197, 47321, 55557]);
 });

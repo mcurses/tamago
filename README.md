@@ -52,7 +52,8 @@ on its species' character and its current mood.
   sidebar shows per workspace: agent status pills and the working spinner, description, latest
   notification, branch and directory, progress, log lines, ports and pull requests (clickable) and
   SSH targets. It follows cmux's own switches in Settings → Sidebar (or `"sidebar"` in
-  `cmux.json`), so turn details on and off there.
+  `cmux.json`), so turn details on and off there. Ports nothing listens on anymore are left out,
+  since cmux keeps a stopped dev server's port around.
 
 ## Requirements
 
