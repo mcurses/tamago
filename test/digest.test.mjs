@@ -50,3 +50,15 @@ test("until replays the transcript as it was then", () => {
   assert.equal(digest(file, { until: Date.parse(at(5)) }).prompt, "first");
   assert.equal(digest(file).prompt, "second");
 });
+
+test("a long turn full of logged API requests still has its prompt", () => {
+  const blob = { type: "api-request", timestamp: at(2), body: "x".repeat(400 * 1024) };
+  const d = digest(write("long.jsonl", [
+    user("build the depot", 0),
+    ...Array.from({ length: 6 }, () => blob), // ~2.4 MB, far past the first 768 KB tail
+    use("Bash", { command: "factorio --benchmark" }, 3),
+    end(4),
+  ]));
+  assert.equal(d.prompt, "build the depot");
+  assert.deepEqual(d.commands, ["factorio --benchmark"]);
+});

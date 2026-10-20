@@ -77,22 +77,37 @@ export function transcriptFor(dirs) {
   return best;
 }
 
-function readTail(file) {
+// Newer Claude Code versions log every raw API request into the transcript ("api-request…"
+// entries, megabytes per turn). They are skipped without parsing, and the tail grows until it
+// reaches back to the turn's prompt, so a long turn isn't seen as tool results without a start.
+const SKIPPED = /^\{[^{]{0,200}"type":"api-request/;
+const MAX_TAIL_BYTES = 48 * 1024 * 1024;
+
+function readTurnTail(file) {
+  for (let bytes = TAIL_BYTES; ; bytes *= 4) {
+    const { entries, whole } = readTail(file, bytes);
+    if (whole || bytes >= MAX_TAIL_BYTES || entries.some(promptText)) return entries;
+  }
+}
+
+function readTail(file, bytes) {
   const fd = fs.openSync(file, "r");
   try {
     const size = fs.fstatSync(fd).size;
-    const start = Math.max(0, size - TAIL_BYTES);
+    const start = Math.max(0, size - bytes);
     const buf = Buffer.alloc(size - start);
     fs.readSync(fd, buf, 0, buf.length, start);
     const lines = buf.toString("utf8").split("\n");
     if (start > 0) lines.shift(); // first line is probably cut in half
-    return lines.flatMap((l) => {
+    const entries = lines.flatMap((l) => {
+      if (!l || SKIPPED.test(l)) return [];
       try {
         return [JSON.parse(l)];
       } catch {
         return [];
       }
     });
+    return { entries, whole: start === 0 };
   } finally {
     fs.closeSync(fd);
   }
@@ -132,7 +147,7 @@ function excerptOf(edit) {
  * transcript as it was then, to replay an older turn.
  */
 export function digest(file, { until = Infinity } = {}) {
-  const entries = readTail(file).filter((e) => !e.timestamp || Date.parse(e.timestamp) <= until);
+  const entries = readTurnTail(file).filter((e) => !e.timestamp || Date.parse(e.timestamp) <= until);
   let promptIdx = -1;
   const prompts = [];
   let lastTurnEndAt = null;
