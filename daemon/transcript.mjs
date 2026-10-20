@@ -1,11 +1,21 @@
 // Reads Claude Code transcripts (~/.claude/projects/<slug>/<session>.jsonl) for a workspace and
-// condenses the latest turn into a small digest Tama can react to.
+// condenses the latest turn into a small digest Tama can react to. Sessions of other accounts live
+// in other config dirs (CLAUDE_CONFIG_DIR, e.g. ~/.claude-work), so every ~/.claude*/projects counts.
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const PROJECTS = path.join(os.homedir(), ".claude/projects");
+/** Every Claude config dir's projects folder: ~/.claude, ~/.claude-work, ~/.claude-wa1, … */
+export function projectRoots(home = os.homedir()) {
+  const roots = [];
+  for (const e of fs.readdirSync(home, { withFileTypes: true })) {
+    if (!e.name.startsWith(".claude") || !(e.isDirectory() || e.isSymbolicLink())) continue;
+    const p = path.join(home, e.name, "projects");
+    if (fs.existsSync(p)) roots.push(p);
+  }
+  return roots;
+}
 const TAIL_BYTES = 768 * 1024;
 const MAX_AGE_MS = 12 * 3600_000;
 const TEST_FAIL = /(\b[1-9]\d* (failed|failing)\b|^FAIL\b|\bTests?:.*\b[1-9]\d* failed\b|AssertionError|✗ |\bnot ok \d+)/m;
@@ -19,12 +29,17 @@ const slug = (dir) => dir.replace(/[^a-zA-Z0-9]/g, "-");
 export function transcriptForSession(sessionId, cwd) {
   const uuid = String(sessionId ?? "").replace(/^claude-/, "");
   if (!uuid) return null;
-  const direct = cwd && path.join(PROJECTS, slug(cwd), `${uuid}.jsonl`);
-  if (direct && fs.existsSync(direct)) return direct;
+  const roots = projectRoots();
+  for (const root of roots) {
+    const direct = cwd && path.join(root, slug(cwd), `${uuid}.jsonl`);
+    if (direct && fs.existsSync(direct)) return direct;
+  }
   // The session may have started in another directory than the hook's cwd; look everywhere.
-  for (const d of fs.readdirSync(PROJECTS)) {
-    const p = path.join(PROJECTS, d, `${uuid}.jsonl`);
-    if (fs.existsSync(p)) return p;
+  for (const root of roots) {
+    for (const d of fs.readdirSync(root)) {
+      const p = path.join(root, d, `${uuid}.jsonl`);
+      if (fs.existsSync(p)) return p;
+    }
   }
   return null;
 }
@@ -32,8 +47,8 @@ export function transcriptForSession(sessionId, cwd) {
 /** Most recently written transcript among the given directories, or null. */
 export function transcriptFor(dirs) {
   let best = null;
-  for (const dir of new Set(dirs.filter(Boolean))) {
-    const proj = path.join(PROJECTS, slug(dir));
+  const roots = projectRoots();
+  for (const proj of new Set(dirs.filter(Boolean).flatMap((dir) => roots.map((root) => path.join(root, slug(dir)))))) {
     let files;
     try {
       files = fs.readdirSync(proj).filter((f) => f.endsWith(".jsonl"));
