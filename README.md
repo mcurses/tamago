@@ -23,8 +23,11 @@ on its species' character and its current mood.
 
 - **A global watcher.** Every finished Claude Code turn, in any workspace, may get a comment. It
   comes a bit later and only sometimes, not as an instant reply. Comments use a digest of the
-  session transcript: what you asked, what the agent said, the tools it used, errors, failing tests
-  and diff size. They also see what happened in your other sessions recently.
+  session transcript: what you asked, what the agent said, the files it edited and a few lines of
+  its last edit (never from `.env`, keys or similar), the last commands, errors, failing test lines
+  and diff size. They also see what happened in your other sessions recently. Tama remarks on the
+  work itself (a claim that doesn't add up, a skipped step, something done well), as an
+  observation, never advice. Idle stretches and workspace switches only rarely get a remark.
 - **A memory.** Tama keeps a diary of what it said, so it can follow up on itself instead of
   repeating the same jokes. The diary belongs to the species: after a switch, the new one knows
   what happened (turns, switches, feedings) but not what the old one said, as if it had always
@@ -188,6 +191,7 @@ of `ensure-running.sh` in your `~/.zshrc` line.
 | Variable | Default | Meaning |
 |---|---|---|
 | `TAMAGO_LANG` | `English` | Language Tama speaks |
+| `TAMAGO_MODEL` | `haiku` | Model for Tama's remarks; `sonnet` is sharper but uses more of your plan |
 | `TAMAGO_CHANCE` | `0.35` | Base chance to comment on a finished turn (at least 0.7 for turns the character cares about strongly), scaled by how chatty and awake Tama is |
 | `TAMAGO_DELAY_S` | `20-90` | Seconds between a turn ending and the comment |
 | `TAMAGO_COOLDOWN_S` | `150` | Minimum quiet time between comments, across all sessions |
@@ -206,6 +210,7 @@ tail -f ~/.local/state/tamago/tamago.log                  # what Tama notices an
 node daemon/tamago.mjs --peek --brain                     # Tama's context for the open workspace, plus a sample line
 node daemon/tamago.mjs --say "hello" happy                # push a comment by hand
 node daemon/tamago.mjs --mood                             # mood, causes, tastes
+node daemon/tamago.mjs --compare 8                        # replay the last 8 turn remarks on Haiku and Sonnet into build/compare.md
 scripts/render-pet.sh                                     # draw the compiled footer's animations to build/pet-sheet.png
 node --test test/mood.test.mjs                            # mood engine tests
 TAMAGO_DELAY_S=2-4 TAMAGO_CHANCE=1 node daemon/tamago.mjs --dry-run   # log-only test run

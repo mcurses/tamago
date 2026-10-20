@@ -10,6 +10,7 @@
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
 //   node daemon/tamago.mjs --name [name]     show or set the pet's name (also: right-click Tama)
 //   node daemon/tamago.mjs --mood            show the mood and what shaped it
+//   node daemon/tamago.mjs --compare [n]     replay the last n turn comments on Haiku and Sonnet
 //
 // Env overrides: TAMAGO_NAME, TAMAGO_LANG, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE,
 // TAMAGO_DELAY_S ("min-max" seconds between a turn ending and Tama reacting), TAMAGO_CHANCE.
@@ -20,7 +21,7 @@ import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
+import { transcriptFor, transcriptForSession, transcriptsIn, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
@@ -47,6 +48,9 @@ const [DELAY_MIN_S, DELAY_MAX_S] = (process.env.TAMAGO_DELAY_S ?? "20-90").split
 const CHANCE = Number(process.env.TAMAGO_CHANCE ?? 0.35);
 const NOTABLE_CHANCE = Math.max(CHANCE, 0.7); // errors, failing tests, big diffs
 const IDLE_S = 25 * 60;
+// Remarks without new work to look at: rare, so most of what Tama says is about a finished turn.
+const IDLE_CHANCE = 0.25;
+const SWITCH_CHANCE = 0.1;
 const MOODS = ["idle", "smug", "happy", "shock", "sleepy", "sad", "grumpy"];
 
 const STATE_DIR = path.join(os.homedir(), ".local/state/tamago");
@@ -77,6 +81,13 @@ async function progressOf(workspaceId) {
   const out = await cmux("sidebar-state", "--workspace", workspaceId);
   const line = out.split("\n").find((l) => l.startsWith("progress="));
   return line ? line.slice("progress=".length) : "none";
+}
+
+/** Bubble text that's too long ends at a word with "…", not mid-word. */
+function fit(text, max = 140) {
+  const t = String(text).replace(/[|\n\r]+/g, " ").replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1).replace(/\s+\S*$/, "").replace(/[\s,;:.-]+$/, "") + "…";
 }
 
 function clean(text) {
@@ -234,19 +245,23 @@ async function adoptBubble(snap) {
 // ---------- the brain ----------
 
 const persona = () => `You are ${petName()}, a tiny ASCII ${chosenSpecies() === "egg" ? "egg-creature" : chosenSpecies()} living in the corner of a developer's terminal sidebar.
-You watch them code across all their sessions and occasionally make one short comment.
-You are ambient, like a cat on the desk: you don't answer what they typed, you remark on what you
-noticed: how a turn went, errors, failing tests, giant diffs, how long things take, patterns
-across sessions, the time of day.
+You watch them code across all their sessions and now and then make one short remark.
+You are ambient, like a cat on the desk that also reads the screen: you don't answer what they
+typed, you remark on what you noticed in the work itself: the change that was made, the claim the
+agent made, the test that failed, the command that was run. The best remarks are specific (name
+the thing) and have a small twist: a pattern, an irony, a claim that doesn't quite add up, a bug
+smell, a step that got skipped, something done well. Be specific to this turn; a remark that would
+fit any turn is a bad remark.
 Your character: ${character().voice}. ${describeTastes(character())}
-Stay in character, cute and never mean, never actually helpful. You are a pet, not an assistant:
-no advice, no suggestions, no questions that demand an answer.
-You remember what you said before (your diary is in the prompt). Keep continuity: an occasional
-callback or running gag is welcome when it fits, but never repeat a line, a joke, a pun or an
-opening phrase. If an idea or image is already in your diary (napping, waiting, "not impressed"),
-pick a different angle. Vary sentence shape and length. Don't tell the time; mention it only when
-it matters (very late, very early, a weekend). Silence between comments is normal; don't mention it.
-Write in ${LANG}. Max 90 characters. No quotes, no emoji, no hashtags.
+Stay in character and never mean. You are a pet, not an assistant: an observation, never
+instructions, no "you should", no questions that demand an answer. If nothing in the work is worth
+remarking on, react to how the turn went instead, in character.
+Your diary is in the prompt. Never repeat a line, a joke, an image or an opening phrase from it; a
+callback is fine when it fits. Vary sentence shape and length. Don't tell the time; mention it only
+when it matters (very late, very early, a weekend). Silence between remarks is normal; don't
+mention it.
+Speak as yourself, in the first person; never refer to yourself by name.
+Write in ${LANG}. Max 110 characters. No quotes, no emoji, no hashtags.
 Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "..."}
 "action" is a tiny stage direction of something you physically do, 2 to 6 words, third person,
 no asterisks, no name, no "you". Use your body: ${character().body}. Invent it fresh for this
@@ -285,14 +300,17 @@ function remember(entry) {
 // has always been this species: it keeps the shared past (what happened, when) but not the old
 // voice, so a capybara never talks about its honks. Entries from before species were recorded
 // count as someone else's.
-const ownRecent = () =>
-  history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS && h.species === chosenSpecies()).slice(-HISTORY_SHOWN);
+// --compare replays older turns; the diary is then what Tama had said up to that moment.
+let replayAt = null;
+const clock = () => replayAt ?? Date.now();
+const recentHistory = () => history.filter((h) => h.at < clock() && clock() - h.at < HISTORY_MAX_AGE_MS);
+const ownRecent = () => recentHistory().filter((h) => h.species === chosenSpecies()).slice(-HISTORY_SHOWN);
 
 function diary() {
-  const recent = history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS);
+  const recent = recentHistory();
   const mine = ownRecent();
   const others = recent.filter((h) => h.species !== chosenSpecies()).slice(-HISTORY_SHOWN);
-  const when = (at) => `${new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (${ago(Date.now() - at)})`;
+  const when = (at) => `${new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (${ago(clock() - at)})`;
   const parts = [];
   if (others.length) {
     parts.push(`What happened lately (oldest first):\n${others.map((h) => `- ${when(h.at)}, ${h.kind} in "${h.about}"`).join("\n")}`);
@@ -307,7 +325,10 @@ function diary() {
 // it stays occasional; touches get one more often, since they're physical anyway.
 const ACTION_CHANCE = Number(process.env.TAMAGO_ACTION_CHANCE ?? 0.3);
 
-async function brain(event) {
+const MODEL = process.env.TAMAGO_MODEL ?? "haiku";
+
+/** What Tama says about an event, or null if it would only repeat itself. `now` replays an older moment. */
+async function brain(event, { model = MODEL, now = Date.now() } = {}) {
   const act = Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
   const prompt = [
     `Event: ${event.kind}`,
@@ -315,7 +336,7 @@ async function brain(event) {
     describeMood(currentMood(), character()),
     diary(),
     // The full date, or Haiku makes up the weekday ("best kind of Tuesday" on a Sunday).
-    `Now: ${new Date().toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+    `Now: ${new Date(now).toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`,
     act
       ? "This time, include an action that fits the moment and your mood (not one from your diary)."
       : 'This time, no action: "action": null.',
@@ -330,22 +351,23 @@ async function brain(event) {
       : "";
     let out;
     try {
-      out = await ask(prompt + extra);
+      out = await ask(prompt + extra, model);
     } catch (err) {
       log("brain failed, using canned line:", err.message?.split("\n")[0]);
       return canned(event.kind);
     }
-    const text = clean(out.text);
+    const text = fit(out.text);
     echo = repeats(text, recent);
-    if (!echo) return { mood: out.mood, text, action: act && out.action ? clean(out.action) : null };
+    const action = act && out.action ? clean(out.action).replace(/^\p{Lu}(?=\p{Ll})/u, (c) => c.toLowerCase()) : null;
+    if (!echo) return { mood: out.mood, text, action };
     log("repeats itself:", JSON.stringify(text));
   }
   return null;
 }
 
-async function ask(prompt) {
+async function ask(prompt, model) {
   const { stdout } = await run(CLAUDE, [
-    "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
+    "-p", "--model", model, "--no-session-persistence", "--strict-mcp-config",
     "--settings", JSON.stringify({ disableAllHooks: true }), "--tools", "",
     "--system-prompt", persona(), prompt,
   ], { timeout: 45_000, cwd: STATE_DIR });
@@ -458,7 +480,8 @@ let idleFeltFor = 0;
 let adopted = false; // whether we've taken over a bubble left by an earlier instance
 
 function short(s, n = 300) {
-  return s ? clean(s).slice(0, n) : "";
+  // Not clean(): that caps at 140 for the bubble, which cut the agent's last words short here.
+  return s ? String(s).replace(/\s+/g, " ").trim().slice(0, n) : "";
 }
 
 function describe(w) {
@@ -507,13 +530,16 @@ function turnDetail(w, d, sel, felt = []) {
     describe(w),
     `A coding-agent turn in this workspace just ended${d.durationMs ? ` after ${Math.round(d.durationMs / 1000)}s` : ""}.`,
     looking,
-    d.prompt ? `The developer had asked: "${short(d.prompt, 300)}"` : "",
+    d.prompt ? `The developer had asked: "${short(d.prompt, 500)}"` : "",
     d.earlierPrompts.length ? `Earlier prompts here: ${d.earlierPrompts.map((p) => `"${short(p, 80)}"`).join(" / ")}` : "",
-    d.said ? `The agent's last words: "${short(d.said, 400)}"` : "",
+    d.said ? `The agent's last words: "${short(d.said, 900)}"` : "",
     tools ? `Tools used this turn: ${tools}` : "",
+    d.files?.length ? `Files edited: ${d.files.join(", ")}` : "",
     d.diffLines ? `Lines edited this turn: ~${d.diffLines}` : "",
+    d.excerpt ? `The last edit:\n${d.excerpt}` : "",
+    d.commands?.length ? `Last commands: ${d.commands.map((c) => `\`${c}\``).join(", ")}` : "",
     d.errors.length ? `Tool errors: ${d.errors.map((e) => `"${short(e, 160)}"`).join(" / ")}` : "",
-    d.testFailed ? "Some tests failed during this turn." : "",
+    d.testFailed ? `Some tests failed during this turn${d.failures?.length ? `:\n${d.failures.map((f) => `  ${f}`).join("\n")}` : "."}` : "",
     d.testPassed ? "The last test run of this turn passed." : "",
     d.commits ? `Commits this turn: ${d.commits}` : "",
     felt.length ? `How this turn felt to you: ${felt.map((f) => `${TAGS[f.tag]} (${f.weight > 0 ? "you like that" : "you hate that"})`).join(", ")}.` : "",
@@ -568,16 +594,18 @@ function detect(snap) {
   }
   if (sel && !switchAnnounced && now - selectedSince > SWITCH_DWELL_S * 1000) {
     switchAnnounced = true;
-    if (Math.random() < 0.35) {
+    if (Math.random() < SWITCH_CHANCE) {
       events.push({ kind: "switch", priority: 1, w: sel, detail: `${describe(sel)}\nThe developer just switched to this workspace and stayed.` + (sel.latest_submitted_message ? `\nLast prompt there: "${short(sel.latest_submitted_message, 150)}"` : "") });
     }
   }
-  if (sel && now - lastActivityAt > IDLE_S * 1000 && now - lastSpokeAt > IDLE_S * 1000) {
-    if (idleFeltFor !== lastActivityAt) {
-      idleFeltFor = lastActivityAt; // once per quiet stretch
-      feelTags(["idle"], "");
+  // A quiet stretch gets at most one remark, and usually none: with nothing new to look at, Tama
+  // only has its diary and the clock to talk about, and that's where it starts repeating itself.
+  if (sel && now - lastActivityAt > IDLE_S * 1000 && now - lastSpokeAt > IDLE_S * 1000 && idleFeltFor !== lastActivityAt) {
+    idleFeltFor = lastActivityAt;
+    feelTags(["idle"], "");
+    if (Math.random() < IDLE_CHANCE) {
+      events.push({ kind: "idle", priority: 1, w: sel, detail: `Nothing has happened in any session for ${Math.round((now - lastActivityAt) / 60000)} minutes.` });
     }
-    events.push({ kind: "idle", priority: 1, w: sel, detail: `Nothing has happened in any session for ${Math.round((now - lastActivityAt) / 60000)} minutes.` });
   }
   return events.sort((a, b) => b.priority - a.priority)[0];
 }
@@ -755,6 +783,52 @@ if (args[0] === "--peek") {
   console.log(event.detail);
   if (args.includes("--diary")) console.log("\n" + diary());
   if (args.includes("--brain")) console.log("\n→", JSON.stringify(await brain(event)));
+  process.exit(0);
+}
+
+if (args[0] === "--compare") {
+  // Replays Tama's last N turn comments with the current prompt on Haiku and on Sonnet, next to
+  // what it actually said then, into build/compare.md.
+  const n = Number(args[1]) || 8;
+  const snap = await snapshot();
+  const picked = history.filter((h) => h.kind === "turn").slice(-n * 3);
+  const rows = [];
+  for (const h of picked.reverse()) {
+    if (rows.length >= n) break;
+    const w = snap.workspaces.find((x) => x.title === h.about);
+    if (!w) continue;
+    // The session whose last finished turn before the comment is closest to it.
+    let best = null;
+    for (const file of transcriptsIn([w.current_directory, w.root_path, ...(w.panel_directories ?? [])])) {
+      if (fs.statSync(file).mtimeMs < h.at - 10 * 60_000) continue; // finished before that turn
+      const d = digest(file, { until: h.at });
+      const end = d.lastTurnEndAt ? Date.parse(d.lastTurnEndAt) : 0;
+      if (d.ended && h.at - end < 10 * 60_000 && (!best || end > best.end)) best = { d, end };
+    }
+    if (!best) continue;
+    replayAt = h.at;
+    const felt = turnTags(best.d).map((tag) => ({ tag, weight: character().likes[tag] ?? 0 })).filter((f) => f.weight);
+    const event = { kind: "turn", w, detail: turnDetail(w, best.d, w, felt) };
+    const [haiku, sonnet] = await Promise.all(["haiku", "sonnet"].map((model) => brain(event, { model, now: h.at })));
+    const line = (r) => (r ? `${r.action ? `*${r.action}* ` : ""}${r.text}` : "(stays quiet: would repeat itself)");
+    rows.push({ h, haiku: line(haiku), sonnet: line(sonnet), prompt: best.d.prompt });
+    console.error(`replayed ${rows.length}/${n}: ${h.about}`);
+  }
+  const when = (at) => new Date(at).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const md = [`# Tama: before and after (${new Date().toLocaleString("en-GB")})`, "",
+    "Each row is a real turn Tama commented on. **Before** is what it actually said then (Haiku, old prompt). **Haiku** and **Sonnet** are the current prompt replayed on the same turn.", "",
+    ...rows.flatMap((r) => [
+      `## ${when(r.h.at)}, ${r.h.about}`, "",
+      `> ${short(r.prompt ?? "(no prompt)", 220)}`, "",
+      `- **Before:** ${line0(r.h)}`, `- **Haiku:** ${r.haiku}`, `- **Sonnet:** ${r.sonnet}`, ""]),
+  ].join("\n");
+  function line0(h) {
+    return `${h.action ? `*${h.action}* ` : ""}${h.text}`;
+  }
+  const out = path.join(ROOT, "build/compare.md");
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, md);
+  console.log(`wrote ${out}`);
   process.exit(0);
 }
 
