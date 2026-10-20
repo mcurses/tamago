@@ -44,6 +44,19 @@ export function transcriptForSession(sessionId, cwd) {
   return null;
 }
 
+/** Every transcript of the given directories, in every account's config dir. */
+export function transcriptsIn(dirs) {
+  const roots = projectRoots();
+  return [...new Set(dirs.filter(Boolean))].flatMap((dir) => roots.flatMap((root) => {
+    const proj = path.join(root, slug(dir));
+    try {
+      return fs.readdirSync(proj).filter((f) => f.endsWith(".jsonl")).map((f) => path.join(proj, f));
+    } catch {
+      return [];
+    }
+  }));
+}
+
 /** Most recently written transcript among the given directories, or null. */
 export function transcriptFor(dirs) {
   let best = null;
@@ -100,13 +113,26 @@ function promptText(e) {
   return text && !text.startsWith("<") ? text : null;
 }
 
+// Files whose contents never go into Tama's prompt, even as a diff excerpt.
+const PRIVATE_FILE = /(^|\/)\.env|secret|credential|token|password|\.pem$|\.key$|id_rsa/i;
+const FAIL_LINE = /(\bFAIL\b|✗|✖|\bnot ok\b|\bfailed\b|AssertionError|Error:)/;
+
+/** The last edit of the turn as a small diff: a few removed and added lines. */
+function excerptOf(edit) {
+  if (!edit || PRIVATE_FILE.test(edit.file)) return null;
+  const take = (s, n, mark) => (s ? s.split("\n").filter((l) => l.trim()).slice(0, n).map((l) => `${mark} ${l.slice(0, 120)}`) : []);
+  const lines = [...take(edit.old, 5, "-"), ...take(edit.new, 8, "+")];
+  return lines.length ? lines.join("\n").slice(0, 900) : null;
+}
+
 /**
  * Digest of the latest turn: { prompt, earlierPrompts, said, tools, errors, testFailed, testPassed,
- * commits, diffLines, durationMs, ended, lastTurnEndAt, turnsToday }. testPassed means the last test
- * run of the turn passed.
+ * commits, diffLines, durationMs, ended, lastTurnEndAt, turnsToday, files, excerpt, commands,
+ * failures }. testPassed means the last test run of the turn passed. `until` (ms) reads the
+ * transcript as it was then, to replay an older turn.
  */
-export function digest(file) {
-  const entries = readTail(file);
+export function digest(file, { until = Infinity } = {}) {
+  const entries = readTail(file).filter((e) => !e.timestamp || Date.parse(e.timestamp) <= until);
   let promptIdx = -1;
   const prompts = [];
   let lastTurnEndAt = null;
@@ -133,6 +159,10 @@ export function digest(file) {
   let diffLines = 0;
   let durationMs = null;
   let ended = false;
+  const files = [];
+  const commands = [];
+  const failures = [];
+  let lastEdit = null;
   for (const e of turn) {
     if (e.type === "system" && e.subtype === "turn_duration") {
       ended = true;
@@ -144,11 +174,22 @@ export function digest(file) {
         tools[b.name] = (tools[b.name] ?? 0) + 1;
         if (b.name === "Bash" && COMMIT.test(String(b.input?.command ?? ""))) commits++;
         diffLines += lineCount(b.input?.new_string) + lineCount(b.input?.old_string) + lineCount(b.input?.content);
+        const f = b.input?.file_path ?? b.input?.notebook_path;
+        if (f && /^(Edit|MultiEdit|Write|NotebookEdit)$/.test(b.name)) {
+          const rel = path.basename(path.dirname(f)) + "/" + path.basename(f);
+          if (!files.includes(rel)) files.push(rel);
+          const edit = b.input.edits?.at(-1) ?? b.input;
+          lastEdit = { file: f, old: edit.old_string, new: edit.new_string ?? edit.content ?? edit.new_source };
+        }
+        if (b.name === "Bash" && b.input?.command) commands.push(String(b.input.command).split("\n")[0].slice(0, 100));
       }
       if (b.type === "tool_result") {
         const text = resultText(b);
         if (b.is_error && errors.length < 2) errors.push(text.trim().slice(0, 200));
-        if (TEST_FAIL.test(text)) [testFailed, testPassed] = [true, false];
+        if (TEST_FAIL.test(text)) {
+          [testFailed, testPassed] = [true, false];
+          for (const l of text.split("\n")) if (FAIL_LINE.test(l) && failures.length < 3) failures.push(l.trim().slice(0, 140));
+        }
         else if (TEST_PASS.test(text)) testPassed = true;
       }
     }
@@ -167,5 +208,9 @@ export function digest(file) {
     ended,
     lastTurnEndAt,
     turnsToday,
+    files: files.slice(-6),
+    excerpt: excerptOf(lastEdit),
+    commands: commands.slice(-4),
+    failures,
   };
 }
