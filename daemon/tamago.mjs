@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { transcriptFor, transcriptForSession, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
+import { repeats } from "./repeats.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
@@ -243,7 +244,8 @@ no advice, no suggestions, no questions that demand an answer.
 You remember what you said before (your diary is in the prompt). Keep continuity: an occasional
 callback or running gag is welcome when it fits, but never repeat a line, a joke, a pun or an
 opening phrase. If an idea or image is already in your diary (napping, waiting, "not impressed"),
-pick a different angle. Vary sentence shape and length. Silence between comments is normal; don't mention it.
+pick a different angle. Vary sentence shape and length. Don't tell the time; mention it only when
+it matters (very late, very early, a weekend). Silence between comments is normal; don't mention it.
 Write in ${LANG}. Max 90 characters. No quotes, no emoji, no hashtags.
 Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "..."}
 "action" is a tiny stage direction of something you physically do, 2 to 6 words, third person,
@@ -283,9 +285,12 @@ function remember(entry) {
 // has always been this species: it keeps the shared past (what happened, when) but not the old
 // voice, so a capybara never talks about its honks. Entries from before species were recorded
 // count as someone else's.
+const ownRecent = () =>
+  history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS && h.species === chosenSpecies()).slice(-HISTORY_SHOWN);
+
 function diary() {
   const recent = history.filter((h) => Date.now() - h.at < HISTORY_MAX_AGE_MS);
-  const mine = recent.filter((h) => h.species === chosenSpecies()).slice(-HISTORY_SHOWN);
+  const mine = ownRecent();
   const others = recent.filter((h) => h.species !== chosenSpecies()).slice(-HISTORY_SHOWN);
   const when = (at) => `${new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (${ago(Date.now() - at)})`;
   const parts = [];
@@ -315,20 +320,38 @@ async function brain(event) {
       ? "This time, include an action that fits the moment and your mood (not one from your diary)."
       : 'This time, no action: "action": null.',
   ].filter(Boolean).join("\n");
-  try {
-    const { stdout } = await run(CLAUDE, [
-      "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
-      "--settings", JSON.stringify({ disableAllHooks: true }), "--tools", "",
-      "--system-prompt", persona(), prompt,
-    ], { timeout: 45_000, cwd: STATE_DIR });
-    const json = stdout.slice(stdout.indexOf("{"), stdout.lastIndexOf("}") + 1);
-    const out = JSON.parse(json);
-    if (!out.text) throw new Error("empty text");
-    return { mood: out.mood, text: clean(out.text), action: act && out.action ? clean(out.action) : null };
-  } catch (err) {
-    log("brain failed, using canned line:", err.message?.split("\n")[0]);
-    return canned(event.kind);
+  // Once a phrase is in the diary, Haiku likes to echo it. A line too close to a recent one gets
+  // one retry with the echo pointed out; if that repeats too, Tama stays quiet (null).
+  const recent = ownRecent().map((h) => h.text);
+  let echo = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const extra = echo
+      ? `\nToo close to what you said before: "${echo}". Pick a different subject and a different sentence shape; don't reuse its words or images.`
+      : "";
+    let out;
+    try {
+      out = await ask(prompt + extra);
+    } catch (err) {
+      log("brain failed, using canned line:", err.message?.split("\n")[0]);
+      return canned(event.kind);
+    }
+    const text = clean(out.text);
+    echo = repeats(text, recent);
+    if (!echo) return { mood: out.mood, text, action: act && out.action ? clean(out.action) : null };
+    log("repeats itself:", JSON.stringify(text));
   }
+  return null;
+}
+
+async function ask(prompt) {
+  const { stdout } = await run(CLAUDE, [
+    "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
+    "--settings", JSON.stringify({ disableAllHooks: true }), "--tools", "",
+    "--system-prompt", persona(), prompt,
+  ], { timeout: 45_000, cwd: STATE_DIR });
+  const out = JSON.parse(stdout.slice(stdout.indexOf("{"), stdout.lastIndexOf("}") + 1));
+  if (!out.text) throw new Error("empty text");
+  return out;
 }
 
 const CANNED = {
@@ -698,7 +721,9 @@ async function tick() {
   busy = true;
   try {
     log("event", event.kind, event.w.title);
-    const { mood, text, action } = await brain(event);
+    const said = await brain(event);
+    if (!said) return log("nothing new to say, staying quiet");
+    const { mood, text, action } = said;
     if (await say(event.w, mood, text, action)) {
       lastSpokeAt = Date.now();
       remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text, action });
@@ -951,7 +976,7 @@ async function onTouch(kind) {
   busy = true;
   (async () => {
     try {
-      const { mood: face, text, action } = await brain(event);
+      const { mood: face, text, action } = (await brain(event)) ?? canned(event.kind); // they touched it: always answer
       if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });

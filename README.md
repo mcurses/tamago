@@ -28,7 +28,8 @@ on its species' character and its current mood.
 - **A memory.** Tama keeps a diary of what it said, so it can follow up on itself instead of
   repeating the same jokes. The diary belongs to the species: after a switch, the new one knows
   what happened (turns, switches, feedings) but not what the old one said, as if it had always
-  been this species.
+  been this species. A line too close to a recent one (daemon/repeats.mjs) gets one retry; if
+  that repeats too, Tama stays quiet.
 - **19 looks.** The default egg, plus the 18 original `/buddy` species: duck, goose, blob, cat,
   dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot, rabbit,
   mushroom and chonk. Each is animated, and its eyes show its mood.
