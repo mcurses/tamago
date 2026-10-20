@@ -325,7 +325,7 @@ function diary() {
 // it stays occasional; touches get one more often, since they're physical anyway.
 const ACTION_CHANCE = Number(process.env.TAMAGO_ACTION_CHANCE ?? 0.3);
 
-const MODEL = process.env.TAMAGO_MODEL ?? "haiku";
+const MODEL = process.env.TAMAGO_MODEL ?? "sonnet";
 
 /** What Tama says about an event, or null if it would only repeat itself. `now` replays an older moment. */
 async function brain(event, { model = MODEL, now = Date.now() } = {}) {
@@ -337,6 +337,7 @@ async function brain(event, { model = MODEL, now = Date.now() } = {}) {
     diary(),
     // The full date, or Haiku makes up the weekday ("best kind of Tuesday" on a Sunday).
     `Now: ${new Date(now).toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+    `Speak in the first person ("I", "me"); never call yourself ${petName()}.`,
     act
       ? "This time, include an action that fits the moment and your mood (not one from your diary)."
       : 'This time, no action: "action": null.',

@@ -191,7 +191,7 @@ of `ensure-running.sh` in your `~/.zshrc` line.
 | Variable | Default | Meaning |
 |---|---|---|
 | `TAMAGO_LANG` | `English` | Language Tama speaks |
-| `TAMAGO_MODEL` | `haiku` | Model for Tama's remarks; `sonnet` is sharper but uses more of your plan |
+| `TAMAGO_MODEL` | `sonnet` | Model for Tama's remarks; `haiku` is cheaper but blander and slips into advice more |
 | `TAMAGO_CHANCE` | `0.35` | Base chance to comment on a finished turn (at least 0.7 for turns the character cares about strongly), scaled by how chatty and awake Tama is |
 | `TAMAGO_DELAY_S` | `20-90` | Seconds between a turn ending and the comment |
 | `TAMAGO_COOLDOWN_S` | `150` | Minimum quiet time between comments, across all sessions |
