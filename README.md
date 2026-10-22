@@ -93,6 +93,8 @@ on its species' character and its current mood.
    ```
 
    Without it, start Tama by hand after a restart with `~/code/tamago/scripts/ensure-running.sh`.
+   If cmux's socket starts refusing the running daemon (after a cmux restart), it stays up for
+   the sidebar and Feed/Pet/Poke, and the next shell you open replaces it with a fresh one.
    Rename in the sidebar menus needs the daemon too (see below).
 
 3. **Optional, recommended: the compiled sidebar.** cmux has two kinds of custom sidebars. The

@@ -53,12 +53,13 @@ const IDLE_CHANCE = 0.25;
 const SWITCH_CHANCE = 0.1;
 const MOODS = ["idle", "smug", "happy", "shock", "sleepy", "sad", "grumpy"];
 
-const STATE_DIR = path.join(os.homedir(), ".local/state/tamago");
+const STATE_DIR = process.env.TAMAGO_STATE_DIR ?? path.join(os.homedir(), ".local/state/tamago"); // override for test instances
 const LOG = path.join(STATE_DIR, "tamago.log");
 const PIDFILE = path.join(STATE_DIR, "tamago.pid");
+const DENIED_FILE = path.join(STATE_DIR, "denied"); // pid of an instance the cmux socket refuses
 
 const args = process.argv.slice(2);
-const DRY = args.includes("--dry-run");
+const DRY = args.includes("--dry-run") || process.env.TAMAGO_DRY_RUN === "1"; // the env form reaches instances ensure-running.sh starts
 
 fs.mkdirSync(STATE_DIR, { recursive: true });
 
@@ -101,6 +102,7 @@ let carrier = null;
 // The bubble survives restarts on disk; the label itself is cleared when the daemon stops.
 const BUBBLE_FILE = path.join(STATE_DIR, "bubble.json");
 let bubble = { at: 0, mood: "idle", about: "-", text: "-", action: null, ...readJson(BUBBLE_FILE) };
+let lastDryLabel = null;
 let painted = null; // species + name last written, to repaint when either changes
 
 const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -181,7 +183,9 @@ async function paint(preferId) {
   const text = bubble.action ? clean(`*${bubble.action}* ${bubble.text}`) : bubble.text; // the interpreted sidebar has one text field
   const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${text}|${pet}`;
   if (DRY) {
-    log("dry-run paint", label);
+    if (pet !== painted || label !== lastDryLabel) log("dry-run paint", label);
+    lastDryLabel = label;
+    painted = pet;
     return true;
   }
   // Never clobber real progress some agent reported; carry the label on a free workspace instead.
@@ -477,6 +481,7 @@ let lastSpokeAt = 0;
 let lastActivityAt = Date.now();
 let busy = false;
 let failures = 0;
+let denied = 0; // consecutive "Access denied" replies
 let idleFeltFor = 0;
 let adopted = false; // whether we've taken over a bubble left by an earlier instance
 
@@ -717,8 +722,13 @@ async function handleRequests(snap) {
   }
 }
 
+let lastTickAt = 0;
+
 async function tick() {
   if (busy) return;
+  // Refused by the socket: ask only every 30 s.
+  if (denied >= 20 && Date.now() - lastTickAt < 30_000) return;
+  lastTickAt = Date.now();
   let snap;
   try {
     snap = await snapshot();
@@ -730,15 +740,23 @@ async function tick() {
     // Refused by the socket: this process can never get back in (only processes started inside a
     // cmux terminal may connect), so make room for a fresh one. Anything else, such as cmux being
     // busy or restarting, is waited out instead of giving up.
-    if (/Access denied/.test(why) && failures >= 20) {
-      log("socket refuses this process; exiting");
-      await cleanup().catch(() => {});
-      process.exit(1);
+    // Refused by the socket: after a cmux restart only processes started inside it may connect,
+    // so this one may never get back in. It stays up anyway, since the sidebar and Feed/Pet/Poke
+    // only need its HTTP server, checks cmux less often, and leaves DENIED_FILE for
+    // ensure-running.sh, which replaces it with a fresh instance from the next cmux shell.
+    // Only a long run of denials counts: an overloaded cmux can deny once between timeouts
+    // (2026-10-22: one denial after 40 timeouts used to end the daemon for hours).
+    denied = /Access denied/.test(why) ? denied + 1 : 0;
+    if (denied === 20) {
+      log("socket refuses this process; waiting to be replaced by a fresh one");
+      fs.writeFileSync(DENIED_FILE, String(process.pid));
     }
     return;
   }
   if (failures) log("snapshot works again after", failures, "failures");
   failures = 0;
+  if (denied >= 20) fs.rmSync(DENIED_FILE, { force: true });
+  denied = 0;
   if (!adopted) {
     adopted = true;
     await adoptBubble(snap).catch((err) => log("adopting bubble failed:", err.message));
@@ -765,12 +783,19 @@ async function tick() {
 }
 
 async function cleanup() {
+  // Refused by the socket: clearing the bubble labels would only time out, and ensure-running.sh
+  // is waiting to start the replacement.
+  if (denied >= 20) spokenTo.clear();
   for (const id of spokenTo) {
     try {
       if ((await progressOf(id)).includes("tamago|")) await cmux("clear-progress", "--workspace", id);
     } catch {}
   }
-  try { fs.unlinkSync(PIDFILE); } catch {}
+  // Only our own: a replacement may already have written its pid.
+  try {
+    if (Number(fs.readFileSync(PIDFILE, "utf8")) === process.pid) fs.unlinkSync(PIDFILE);
+  } catch {}
+  fs.rmSync(DENIED_FILE, { force: true });
 }
 
 // ---------- main ----------

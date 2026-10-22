@@ -5,10 +5,20 @@
 # cmux.json runs this as notifications.command, so the daemon comes back after a cmux restart with
 # the first notification. That environment has a bare GUI PATH, hence the node lookup below.
 ROOT=${0:A:h:h}
-STATE=~/.local/state/tamago
+STATE=${TAMAGO_STATE_DIR:-~/.local/state/tamago}
 mkdir -p $STATE
 if [[ -f $STATE/tamago.pid ]] && kill -0 $(<$STATE/tamago.pid) 2>/dev/null; then
-  exit 0
+  # Still running, but refused by the cmux socket (after a cmux restart): replace it with an
+  # instance started from here, inside cmux.
+  if [[ -f $STATE/denied && $(<$STATE/denied) == $(<$STATE/tamago.pid) ]]; then
+    OLD=$(<$STATE/tamago.pid)
+    print "$(date '+%F %T') ensure-running: replacing refused daemon $OLD" >>$STATE/daemon.out
+    kill $OLD
+    for i in {1..20}; do kill -0 $OLD 2>/dev/null || break; sleep 0.25; done
+    rm -f $STATE/denied
+  else
+    exit 0
+  fi
 fi
 NODE=$(command -v node)
 if [[ -z $NODE ]]; then
