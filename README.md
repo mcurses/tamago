@@ -28,6 +28,12 @@ on its species' character and its current mood.
   and diff size. They also see what happened in your other sessions recently. Tama remarks on the
   work itself (a claim that doesn't add up, a skipped step, something done well), as an
   observation, never advice. Idle stretches and workspace switches only rarely get a remark.
+  Turn ends are read from the transcripts themselves, so sessions started without cmux's hooks
+  (another account's alias, a resumed session) count too.
+- **Quiet when you're away.** After 5 minutes without keyboard or mouse input (`TAMAGO_AWAY_S`),
+  Tama keeps watching but says nothing, so overnight runs with a dark screen cost no remarks.
+  When you come back after 30 minutes or more (`TAMAGO_BACK_S`), it greets you with what the
+  sessions did meanwhile.
 - **A memory.** Tama keeps a diary of what it said, so it can follow up on itself instead of
   repeating the same jokes. The diary belongs to the species: after a switch, the new one knows
   what happened (turns, switches, feedings) but not what the old one said, as if it had always

@@ -21,7 +21,7 @@ import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { transcriptFor, transcriptForSession, transcriptsIn, digest } from "./transcript.mjs";
+import { transcriptFor, transcriptForSession, transcriptsIn, turnEndsSince, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
@@ -48,6 +48,7 @@ const [DELAY_MIN_S, DELAY_MAX_S] = (process.env.TAMAGO_DELAY_S ?? "20-90").split
 const CHANCE = Number(process.env.TAMAGO_CHANCE ?? 0.35);
 const NOTABLE_CHANCE = Math.max(CHANCE, 0.7); // errors, failing tests, big diffs
 const IDLE_S = 25 * 60;
+const AWAY_S = Number(process.env.TAMAGO_AWAY_S ?? 5 * 60); // no keyboard/mouse input this long: away
 // Remarks without new work to look at: rare, so most of what Tama says is about a finished turn.
 const IDLE_CHANCE = 0.25;
 const SWITCH_CHANCE = 0.1;
@@ -333,7 +334,7 @@ const MODEL = process.env.TAMAGO_MODEL ?? "sonnet";
 
 /** What Tama says about an event, or null if it would only repeat itself. `now` replays an older moment. */
 async function brain(event, { model = MODEL, now = Date.now() } = {}) {
-  const act = Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
+  const act = event.kind === "back" || Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
@@ -388,6 +389,7 @@ const CANNED = {
   "touch-love": [["happy", "More of that, please."], ["happy", "Acceptable. Highly acceptable."]],
   "touch-meh": [["idle", "Noted."], ["smug", "If you must."]],
   "touch-hate": [["grumpy", "Hands off."], ["grumpy", "Rude."]],
+  back: [["happy", "Oh, you're back."], ["smug", "There you are. I kept an eye on things."]],
   idle: [["sleepy", "Still here. Still judging. Quietly."], ["sleepy", "Is it nap time? It feels like nap time."]],
 };
 
@@ -413,7 +415,7 @@ function cooling(priority) {
   return Date.now() - lastSpokeAt < cooldown * 1000;
 }
 
-/** An agent turn ended in any workspace (cmux agent.hook.Stop). Log it, and maybe plan a late comment. */
+/** An agent turn ended in any workspace (seen in its transcript). Log it, and maybe plan a late comment. */
 async function onTurnEnd(wsId) {
   const now = Date.now();
   lastActivityAt = now;
@@ -425,6 +427,7 @@ async function onTurnEnd(wsId) {
   if (timeline.some((t) => t.wsId === wsId && now - t.at < 5000)) return;
   const d = transcriptOf(w);
   timeline.push({ at: now, wsId, title: w.title, prompt: d?.prompt ? `"${short(d.prompt, 100)}"` : "(no prompt)" });
+  if (awaySince) awayTurns.push({ title: w.title, prompt: d?.prompt ?? null, commits: d?.commits ?? 0, testFailed: Boolean(d?.testFailed) });
   if (timeline.length > 30) timeline.shift();
   const where = w.selected ? "" : " (background)";
   // What Tama reacts to depends on its character: a robot cares about slow turns, a penguin about
@@ -465,13 +468,107 @@ function watchAgentEvents() {
     }
     lastActivityAt = Date.now();
     queueDetails(wsId); // the agent status pill changed
-    if (ev.name === "agent.hook.Stop") onTurnEnd(wsId).catch((err) => log("turn handling failed:", err.message));
+    // Turn ends come from the transcripts (watchTurns), which also see sessions without cmux's hooks.
   });
   child.on("exit", (code) => {
     log("event stream exited", code, "- restarting in 10s");
     setTimeout(watchAgentEvents, 10_000);
   });
 }
+/** Seconds since the last keyboard, mouse or trackpad input (macOS HIDIdleTime); 0 if unknown. */
+async function inputIdleSeconds() {
+  // Test hook: a file holding the idle seconds stands in for the real input clock.
+  if (process.env.TAMAGO_IDLE_FILE) return Number(fs.readFileSync(process.env.TAMAGO_IDLE_FILE, "utf8")) || 0;
+  try {
+    const { stdout } = await run("ioreg", ["-c", "IOHIDSystem", "-d", "4"], { timeout: 3000, maxBuffer: 4 * 1024 * 1024 });
+    const ns = Number(stdout.match(/"HIDIdleTime" = (\d+)/)?.[1]);
+    return Number.isFinite(ns) ? ns / 1e9 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Away and back. After a long absence Tama greets you with what happened in the meantime.
+const BACK_MIN_S = Number(process.env.TAMAGO_BACK_S ?? 30 * 60); // shorter breaks get no greeting
+let idleNow = 0;
+let idleCheckedAt = 0;
+let awaySince = null; // when the last input was, while away
+let awayTurns = []; // turns that ended while away: { title, prompt, commits, testFailed }
+let back = null; // pending welcome-back: { awayMs, turns }
+
+async function checkPresence() {
+  if (Date.now() - idleCheckedAt < 15_000) return;
+  idleCheckedAt = Date.now();
+  idleNow = await inputIdleSeconds();
+  if (!awaySince && idleNow > AWAY_S) {
+    awaySince = Date.now() - idleNow * 1000;
+    awayTurns = [];
+    log(`you're away (no input for ${Math.round(idleNow / 60)} min)`);
+  } else if (awaySince && idleNow < 60) {
+    const awayMs = Date.now() - idleNow * 1000 - awaySince;
+    log(`you're back after ${Math.round(awayMs / 60000)} min, ${awayTurns.length} turns ended meanwhile`);
+    if (awayMs > BACK_MIN_S * 1000) back = { awayMs, turns: awayTurns };
+    awaySince = null;
+    awayTurns = [];
+  }
+}
+
+function backDetail({ awayMs, turns }) {
+  const h = Math.floor(awayMs / 3600_000);
+  const m = Math.round((awayMs % 3600_000) / 60000);
+  const per = new Map();
+  for (const t of turns) {
+    const p = per.get(t.title) ?? { n: 0, commits: 0, failed: 0, last: null };
+    p.n++;
+    p.commits += t.commits;
+    p.failed += t.testFailed ? 1 : 0;
+    p.last = t.prompt ?? p.last;
+    per.set(t.title, p);
+  }
+  const lines = [...per].map(([title, p]) =>
+    `- "${title}": ${p.n} turn${p.n > 1 ? "s" : ""}${p.commits ? `, ${p.commits} commit${p.commits > 1 ? "s" : ""}` : ""}${p.failed ? `, tests failed in ${p.failed}` : ""}${p.last ? `; last asked: "${short(p.last, 120)}"` : ""}`);
+  return [
+    `The developer just came back to the laptop after ${h ? `${h} h ${m} min` : `${m} min`} away.`,
+    turns.length ? `While they were away, the sessions kept working:\n${lines.join("\n")}` : "Nothing happened in any session while they were away.",
+    "Greet them back, in character, with what happened (or that nothing did).",
+  ].join("\n");
+}
+
+// ---------- turn ends, from the transcripts ----------
+// cmux only hears about turns of sessions started through its claude wrapper. Sessions started any
+// other way (an alias with another CLAUDE_CONFIG_DIR, a resumed session) have no hooks: on
+// 2026-10-22 cmux reported 8 of 36 finished turns. Every turn writes a "turn_duration" entry into
+// its transcript, so the daemon looks there instead.
+const turnSeen = new Map(); // transcript path -> size at the last look
+const workspaceDirs = (w) => [w.current_directory, w.root_path, ...(w.panel_directories ?? [])];
+
+function watchTurns() {
+  if (!latestSnap) return;
+  // Each transcript belongs to one workspace: the one a hook tied it to, else the first in its dir.
+  const owner = new Map();
+  for (const w of latestSnap.workspaces) {
+    for (const file of transcriptsIn(workspaceDirs(w))) {
+      if (!owner.has(file) || sessions.get(w.id) === file) owner.set(file, w);
+    }
+  }
+  for (const [file, w] of owner) {
+    let st;
+    try {
+      st = fs.statSync(file);
+    } catch {
+      continue;
+    }
+    const seen = turnSeen.get(file);
+    if (seen === undefined) turnSeen.set(file, st.size); // first look only sets where to start
+    if (seen === undefined || seen === st.size) continue;
+    const { ends, size } = turnEndsSince(file, seen);
+    turnSeen.set(file, size);
+    if (!ends) continue;
+    sessions.set(w.id, file);
+    onTurnEnd(w.id).catch((err) => log("turn handling failed:", err.message));
+  }
+}
+
 const spokenTo = new Set();
 let selectedId = null;
 let selectedSince = Date.now();
@@ -613,6 +710,10 @@ function detect(snap) {
       events.push({ kind: "idle", priority: 1, w: sel, detail: `Nothing has happened in any session for ${Math.round((now - lastActivityAt) / 60000)} minutes.` });
     }
   }
+  if (back && sel) {
+    events.push({ kind: "back", priority: 4, w: sel, detail: backDetail(back) });
+    back = null;
+  }
   return events.sort((a, b) => b.priority - a.priority)[0];
 }
 
@@ -737,9 +838,6 @@ async function tick() {
     const why = [err.stderr, err.stdout, err.code && `exit ${err.code}`, err.signal, err.message]
       .filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 300);
     if (failures <= 3 || failures % 100 === 0) log(`snapshot failed (#${failures}):`, why);
-    // Refused by the socket: this process can never get back in (only processes started inside a
-    // cmux terminal may connect), so make room for a fresh one. Anything else, such as cmux being
-    // busy or restarting, is waited out instead of giving up.
     // Refused by the socket: after a cmux restart only processes started inside it may connect,
     // so this one may never get back in. It stays up anyway, since the sidebar and Feed/Pet/Poke
     // only need its HTTP server, checks cmux less often, and leaves DENIED_FILE for
@@ -763,8 +861,12 @@ async function tick() {
   }
   await handleRequests(snap).catch((err) => log("requests failed:", err.message));
   if (`${chosenSpecies()}|${petName()}` !== painted) await paint().catch((err) => log("paint failed:", err.message));
+  await checkPresence();
   const event = detect(snap);
-  if (!event || cooling(event.priority)) return;
+  if (!event || (event.kind !== "back" && cooling(event.priority))) return;
+  // Nobody at the laptop (sessions often run overnight with the screen dimmed to black): no one
+  // to talk to, so no remark and no model call. The mood still takes the event in.
+  if (awaySince) return log(`${event.kind} in ${event.w.title}: you're away (no input for ${Math.round(idleNow / 60)} min), staying quiet`);
   busy = true;
   try {
     log("event", event.kind, event.w.title);
@@ -1069,9 +1171,13 @@ async function onTouch(kind) {
   const verb = { feed: "fed you", pet: "petted you", poke: "poked you" }[kind];
   const feeling = { love: "You love it", meh: "You're indifferent", hate: "You hate it" }[r.reaction];
   const sel = latestSnap?.workspaces.find((w) => w.selected);
+  // The real count, or the model makes one up ("two pets in one morning" for the first).
+  const today = new Date().toDateString();
+  const before = mood.causes.filter((c) => c.tag === kind && new Date(c.at).toDateString() === today).length - 1; // minus this one
+  const count = before === 0 ? `This is the first time today.` : `They did that ${before} time${before > 1 ? "s" : ""} earlier today.`;
   const event = {
     kind: `touch-${r.reaction}`,
-    detail: `The developer just ${verb} (from your sidebar menu). ${feeling}${r.why ? `: ${r.why}` : ""}. React to that directly, in character; this is the one time you do respond to them.`,
+    detail: `The developer just ${verb} (from your sidebar menu). ${count} ${feeling}${r.why ? `: ${r.why}` : ""}. React to that directly, in character; this is the one time you do respond to them. Don't claim anything happened that isn't stated here.`,
   };
   busy = true;
   (async () => {
@@ -1153,4 +1259,11 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 log(`${petName()} is awake (poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
 await tick();
 watchAgentEvents();
+setInterval(() => {
+  try {
+    watchTurns();
+  } catch (err) {
+    log("watching turns failed:", err.message);
+  }
+}, 5000);
 setInterval(tick, POLL_MS);

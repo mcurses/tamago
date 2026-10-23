@@ -57,6 +57,25 @@ export function transcriptsIn(dirs) {
   }));
 }
 
+/**
+ * How many turns ended in `file` between byte `from` and its end. Claude Code writes a
+ * "turn_duration" entry when a turn finishes, whether or not the session runs with cmux's hooks,
+ * so this catches turns cmux never hears about. Only the last 8 MB of new bytes are read.
+ */
+export function turnEndsSince(file, from) {
+  const fd = fs.openSync(file, "r");
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(from, size - 8 * 1024 * 1024);
+    if (start >= size) return { ends: 0, size };
+    const buf = Buffer.alloc(size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    return { ends: buf.toString("utf8").split('"subtype":"turn_duration"').length - 1, size };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Most recently written transcript among the given directories, or null. */
 export function transcriptFor(dirs) {
   let best = null;

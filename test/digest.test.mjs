@@ -62,3 +62,15 @@ test("a long turn full of logged API requests still has its prompt", () => {
   assert.equal(d.prompt, "build the depot");
   assert.deepEqual(d.commands, ["factorio --benchmark"]);
 });
+
+test("turn ends are counted only in bytes written since the last look", async () => {
+  const { turnEndsSince } = await import("../daemon/transcript.mjs");
+  const file = write("ends.jsonl", [user("a", 0), end(1)]);
+  const first = turnEndsSince(file, 0);
+  assert.equal(first.ends, 1);
+  fs.appendFileSync(file, [user("b", 2), use("Bash", { command: "ls" }, 3)].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  const mid = turnEndsSince(file, first.size);
+  assert.equal(mid.ends, 0); // still running
+  fs.appendFileSync(file, JSON.stringify(end(4)) + "\n");
+  assert.equal(turnEndsSince(file, mid.size).ends, 1);
+});
