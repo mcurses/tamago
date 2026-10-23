@@ -2,6 +2,7 @@
 // contact sheet, so the compiled sidebar's drawing can be checked without cmux.
 //
 //   scripts/render-pet.sh [out.png]
+//   scripts/render-pet.sh --readme docs/preview.png
 
 import AppKit
 import CmuxExtensionKit
@@ -139,10 +140,33 @@ func settingsJSON(_ allOn: Bool) -> [String: Any] {
     print("wrote \(out) (\(image.width)x\(image.height))")
 }
 
+// MARK: README preview
+
+/// The default egg with a real remark Tama once made (2026-10-21), in the sidebar's dark look.
+@MainActor func readmePreview() -> some View {
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    let s = Scenario(label: "", species: "egg", mood: "content", kind: "-", response: "-",
+                     bubble: "Three commits landed on GitHub in seven seconds, and one of them stops my remarks getting cut off mid-thought! I can finally finish my sent",
+                     name: "Tama", bubbleAge: 6 * 60)
+    var state = state(s, reactionAt: t0.timeIntervalSince1970 * 1000)
+    state.bubble.about = "Tamago"
+    state.bubble.action = nil
+    return PetFooter(model: SidebarModel(preview: state), frozenAt: t0)
+        .frame(width: 250)
+        .padding(12)
+        .background(Color(hex: "#1E1E1E")!)
+        .environment(\.colorScheme, .dark)
+}
+
 @main
 struct RenderPet {
     @MainActor static func main() {
-        let out = CommandLine.arguments.dropFirst().first ?? "pet-sheet.png"
+        let args = Array(CommandLine.arguments.dropFirst())
+        if args.first == "--readme" {
+            write(readmePreview(), to: args.count > 1 ? args[1] : "preview.png")
+            return
+        }
+        let out = args.first ?? "pet-sheet.png"
         write(sheet(), to: out)
         write(rowsSheet(), to: out.replacingOccurrences(of: "pet-sheet", with: "rows-sheet"))
     }

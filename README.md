@@ -5,20 +5,7 @@ A tiny ASCII pet for the [cmux](https://cmux.com) terminal, in the spirit of the
 list, watches all your coding-agent sessions, and now and then remarks on one of them, no matter
 which workspace is open. How it says it depends on its species' character and its current mood.
 
-```
-  ┌──────────────────────────────────┐
-  │ re: api-server                   │
-  │ Third red test run in a row. I'm │
-  │ starting to think it likes you.  │
-  └──────────────────────────────────┘
-      ╲
-                                  2m ago
-         ╲
-       .----.   Tama
-      / °  ° \
-      |      |
-      ~`~``~`~
-```
+<img src="docs/preview.png" width="274" alt="Tama, an ASCII egg at the bottom of the cmux sidebar, saying: Three commits landed on GitHub in seven seconds, and one of them stops my remarks getting cut off mid-thought! I can finally finish my sent">
 
 ## Install
 
@@ -217,6 +204,7 @@ node --test test/*.test.mjs                                    # tests
 node daemon/tamago.mjs --peek --brain                          # Tama's context for the open workspace, plus a sample line
 node daemon/tamago.mjs --compare 8                             # replay the last 8 remarks on Haiku and Sonnet into build/compare.md
 scripts/render-pet.sh                                          # draw the footer's animations to build/pet-sheet.png
+scripts/render-pet.sh --readme docs/preview.png                # redraw the picture at the top of this README
 TAMAGO_DELAY_S=2-4 TAMAGO_CHANCE=1 node daemon/tamago.mjs --dry-run   # log-only test run
 ```
 
