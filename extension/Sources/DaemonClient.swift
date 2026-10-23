@@ -110,16 +110,23 @@ struct DaemonState: Decodable, Equatable, Sendable {
     var workspaces: [String: Workspace]
 }
 
-/// Talks to the daemon on 127.0.0.1. URL and token are baked into Info.plist by
-/// scripts/build-extension.sh, since the sandboxed extension can't read the daemon's files.
+/// Talks to the daemon on 127.0.0.1. The token is the daemon's ~/.local/state/tamago/token, which
+/// the sandbox lets the extension read through a read-only exception (scripts/build-extension.sh),
+/// so one build works for everyone. It's read per request, so a new token takes effect at once.
 struct DaemonClient: Sendable {
     let base: URL
-    let token: String
+    let tokenFile: String
 
     init() {
         let info = Bundle.main.infoDictionary ?? [:]
         base = URL(string: info["TamagoDaemonURL"] as? String ?? "http://127.0.0.1:47321")!
-        token = info["TamagoToken"] as? String ?? ""
+        // NSHomeDirectory() is the sandbox container; the token lives in the real home.
+        let home = getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? NSHomeDirectory()
+        tokenFile = home + "/.local/state/tamago/token"
+    }
+
+    private var token: String {
+        ((try? String(contentsOfFile: tokenFile, encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func state() async throws -> DaemonState {

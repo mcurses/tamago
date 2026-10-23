@@ -18,6 +18,7 @@
 import { execFile, spawn } from "node:child_process";
 import readline from "node:readline";
 import { promisify } from "node:util";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1033,9 +1034,13 @@ fs.writeFileSync(PIDFILE, String(process.pid));
 // ---------- compiled sidebar ----------
 // extension/ is a sandboxed cmux sidebar extension. It reads workspaces from cmux itself but gets
 // Tama and everything cmux's extension API lacks (colors, descriptions, pin, rename, reorder, …)
-// from here. scripts/build-extension.sh creates the token and bakes it into the extension.
+// from here. Requests carry the token below; the extension reads the same file through a read-only
+// sandbox exception.
 
 const TOKEN_FILE = path.join(STATE_DIR, "token");
+if (!DRY && !fs.existsSync(TOKEN_FILE)) {
+  fs.writeFileSync(TOKEN_FILE, crypto.randomBytes(24).toString("hex") + "\n", { mode: 0o600 });
+}
 const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
 
 const round1 = (x) => Math.round(x * 10) / 10;
@@ -1257,7 +1262,7 @@ async function sidebarAction(a) {
   latestSnap = await snapshot().catch(() => latestSnap);
 }
 
-if (!DRY && fs.existsSync(TOKEN_FILE)) {
+if (!DRY) {
   await refreshSettings();
   setInterval(refreshSettings, 10_000);
   watchSidebarEvents();

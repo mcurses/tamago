@@ -1,49 +1,53 @@
 #!/bin/zsh
 # Build the compiled Tamago sidebar (an ExtensionKit app extension for cmux) without an Xcode
-# project: swiftc + hand-assembled bundles, ad-hoc signed, installed to ~/Applications/Tamago.app.
+# project: swiftc + hand-assembled bundles, ad-hoc signed, then installed to ~/Applications/Tamago.app.
 #
-#   scripts/build-extension.sh
+#   scripts/build-extension.sh             build for this Mac and install
+#   scripts/build-extension.sh --no-install
 #
-# Needs Xcode (for the macOS SDK and ExtensionKit) and network access the first time, to fetch
-# cmux's CmuxExtensionKit sources (scripts/fetch-sdk.mjs).
+# TAMAGO_ARCHS="arm64 x86_64" builds a universal binary (the release workflow does). Needs Xcode
+# (for the macOS SDK and ExtensionKit) and network access the first time, to fetch cmux's
+# CmuxExtensionKit sources (scripts/fetch-sdk.mjs).
 set -euo pipefail
 ROOT=${0:A:h:h}
 BUILD=$ROOT/build
 APP=$BUILD/Tamago.app
 APPEX=$APP/Contents/Extensions/TamagoSidebar.appex
-STATE=~/.local/state/tamago
 BUNDLE_ID=io.github.mcurses.tamago
-TARGET=$(uname -m)-apple-macos14.0
+ARCHS=(${=TAMAGO_ARCHS:-$(uname -m)})
+VERSION=$(cat $ROOT/VERSION 2>/dev/null || git -C $ROOT describe --tags --always 2>/dev/null || echo dev)
+# Bundle versions must be numbers: 0.2.0 for v0.2.0, 0.0.0 for a dev build.
+NUMERIC=$(print -r -- ${VERSION#v} | grep -Eo '^[0-9]+(\.[0-9]+){0,2}' || echo 0.0.0)
 
 node "$ROOT/scripts/fetch-sdk.mjs"
-
-# Shared secret for the daemon's local HTTP endpoint. The sandboxed extension can't read files
-# outside its container, so the token is baked into its Info.plist at build time.
-mkdir -p $STATE
-[[ -s $STATE/token ]] || { openssl rand -hex 24 >$STATE/token; chmod 600 $STATE/token; }
-TOKEN=$(<$STATE/token)
-PORT=${TAMAGO_PORT:-47321}
 
 rm -rf $APP $BUILD/obj
 mkdir -p $BUILD/obj $APPEX/Contents/MacOS $APPEX/Contents/Resources $APP/Contents/MacOS
 
-echo "compiling CmuxExtensionKit"
-xcrun swiftc -target $TARGET -O -swift-version 6 -parse-as-library -application-extension \
-  -module-name CmuxExtensionKit -emit-library -static -emit-module \
-  -emit-module-path $BUILD/obj/CmuxExtensionKit.swiftmodule \
-  -o $BUILD/obj/libCmuxExtensionKit.a \
-  $BUILD/cmux-sdk/Sources/**/*.swift
+for ARCH in $ARCHS; do
+  TARGET=$ARCH-apple-macos14.0
+  OBJ=$BUILD/obj/$ARCH
+  mkdir -p $OBJ
+  echo "compiling CmuxExtensionKit ($ARCH)"
+  xcrun swiftc -target $TARGET -O -swift-version 6 -parse-as-library -application-extension \
+    -module-name CmuxExtensionKit -emit-library -static -emit-module \
+    -emit-module-path $OBJ/CmuxExtensionKit.swiftmodule \
+    -o $OBJ/libCmuxExtensionKit.a \
+    $BUILD/cmux-sdk/Sources/**/*.swift
 
-echo "compiling TamagoSidebar"
-xcrun swiftc -target $TARGET -O -swift-version 5 -parse-as-library -application-extension \
-  -module-name TamagoSidebar -I $BUILD/obj -L $BUILD/obj -lCmuxExtensionKit \
-  -Xlinker -e -Xlinker _NSExtensionMain \
-  -o $APPEX/Contents/MacOS/TamagoSidebar \
-  $ROOT/extension/Sources/*.swift
+  echo "compiling TamagoSidebar ($ARCH)"
+  xcrun swiftc -target $TARGET -O -swift-version 5 -parse-as-library -application-extension \
+    -module-name TamagoSidebar -I $OBJ -L $OBJ -lCmuxExtensionKit \
+    -Xlinker -e -Xlinker _NSExtensionMain \
+    -o $OBJ/TamagoSidebar \
+    $ROOT/extension/Sources/*.swift
 
-echo "compiling Tamago (container app)"
-xcrun swiftc -target $TARGET -O -parse-as-library \
-  -o $APP/Contents/MacOS/Tamago $ROOT/extension/App/main.swift
+  echo "compiling Tamago container app ($ARCH)"
+  xcrun swiftc -target $TARGET -O -parse-as-library \
+    -o $OBJ/Tamago $ROOT/extension/App/main.swift
+done
+lipo -create -output $APPEX/Contents/MacOS/TamagoSidebar $BUILD/obj/${^ARCHS}/TamagoSidebar
+lipo -create -output $APP/Contents/MacOS/Tamago $BUILD/obj/${^ARCHS}/Tamago
 
 cp $ROOT/sidebar/species.json $APPEX/Contents/Resources/species.json
 
@@ -56,55 +60,45 @@ plist $P CFBundleExecutable string TamagoSidebar
 plist $P CFBundleName string TamagoSidebar
 plist $P CFBundleDisplayName string Tamago
 plist $P CFBundlePackageType string 'XPC!'
-plist $P CFBundleShortVersionString string 1.0
-plist $P CFBundleVersion string 1
+plist $P CFBundleShortVersionString string $NUMERIC
+plist $P CFBundleVersion string $NUMERIC
+plist $P TamagoVersion string $VERSION
 plist $P CFBundleInfoDictionaryVersion string 6.0
 plist $P LSMinimumSystemVersion string 14.0
 plist $P EXAppExtensionAttributes dict
 plist $P EXAppExtensionAttributes:EXExtensionPointIdentifier string com.cmuxterm.app.cmux.sidebar
-plist $P TamagoDaemonURL string "http://127.0.0.1:$PORT"
-plist $P TamagoToken string $TOKEN
+plist $P TamagoDaemonURL string "http://127.0.0.1:${TAMAGO_PORT:-47321}"
 
 P=$APP/Contents/Info.plist
 plist $P CFBundleIdentifier string $BUNDLE_ID
 plist $P CFBundleExecutable string Tamago
 plist $P CFBundleName string Tamago
 plist $P CFBundlePackageType string APPL
-plist $P CFBundleShortVersionString string 1.0
-plist $P CFBundleVersion string 1
+plist $P CFBundleShortVersionString string $NUMERIC
+plist $P CFBundleVersion string $NUMERIC
+plist $P TamagoVersion string $VERSION
 plist $P CFBundleInfoDictionaryVersion string 6.0
 plist $P LSMinimumSystemVersion string 14.0
 plist $P LSUIElement bool true
 
-cat >$BUILD/obj/sidebar.entitlements <<'EOF'
+# The sandboxed extension may read the daemon's token, and nothing else outside its container.
+cat >$BUILD/obj/sidebar.entitlements <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>com.apple.security.app-sandbox</key><true/>
   <key>com.apple.security.network.client</key><true/>
+  <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+  <array><string>/.local/state/tamago/token</string></array>
 </dict>
 </plist>
-EOF
+PLIST
 
-# Ad-hoc signatures are enough for an extension that only runs on this Mac.
+# Ad-hoc signatures: no Apple developer account needed. A download keeps working because the
+# installer fetches it with curl, which doesn't set the quarantine flag.
 codesign --force --sign - --entitlements $BUILD/obj/sidebar.entitlements $APPEX
 codesign --force --sign - $APP
+echo "built $APP ($VERSION, ${(j:+:)ARCHS})"
 
-# Update an existing install in place. Stop the running extension first, then copy and register
-# it again (a changed binary drops it from pluginkit; the user's enablement survives). cmux 0.64
-# doesn't reconnect by itself: its sidebar shows "Extension Blocked" until Try Again is clicked.
-mkdir -p ~/Applications
-DEST=~/Applications/Tamago.app
-FIRST=$([[ -d $DEST ]] && echo no || echo yes)
-pkill -f "$DEST/Contents/Extensions/TamagoSidebar.appex/Contents/MacOS/TamagoSidebar" || true
-rsync -a --delete $APP/ $DEST/
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f $DEST
-pluginkit -a $DEST/Contents/Extensions/TamagoSidebar.appex
-if [[ $FIRST == yes ]]; then
-  pluginkit -e use -i $BUNDLE_ID.sidebar
-  echo "installed $DEST. In cmux: Settings > Custom Sidebars > Extensions on, then pick Extension Sidebar"
-  echo "from the sidebar toggle button's right-click menu and allow Tamago's requested access."
-else
-  echo "updated $DEST (if cmux shows 'Extension Blocked', click Try Again)"
-fi
+[[ ${1-} == --no-install ]] || "$ROOT/scripts/install-app.sh" $APP
