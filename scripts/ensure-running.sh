@@ -2,8 +2,9 @@
 # Start the Tamago daemon detached unless it is already running.
 # Must run from a process started inside cmux: the cmux socket ("cmuxOnly" mode) only admits
 # processes cmux is responsible for, and that survives detaching, so the daemon outlives the tab.
-# cmux.json runs this as notifications.command, so the daemon comes back after a cmux restart with
-# the first notification. That environment has a bare GUI PATH, hence the node lookup below.
+# install.sh adds a line to the shell's startup file that runs this in every new cmux terminal, so
+# the daemon comes back after a cmux restart. A shell may not have node on its PATH yet at that
+# point (nvm loads later), hence the lookup below.
 ROOT=${0:A:h:h}
 STATE=${TAMAGO_STATE_DIR:-~/.local/state/tamago}
 mkdir -p $STATE

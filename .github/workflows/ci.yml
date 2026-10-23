@@ -1,0 +1,21 @@
+# Tests and a build of the compiled sidebar for every push and pull request.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test test/*.test.mjs
+      - run: xcrun swiftc --version
+      - name: Build the sidebar extension
+        run: TAMAGO_ARCHS="arm64 x86_64" scripts/build-extension.sh --no-install
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

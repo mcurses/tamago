@@ -21,7 +21,10 @@ if (fs.existsSync(stamp) && fs.readFileSync(stamp, "utf8").trim() === COMMIT) {
 }
 
 const get = async (url, as) => {
-  const res = await fetch(url, { headers: { "User-Agent": "tamago-build" } });
+  const headers = { "User-Agent": "tamago-build" };
+  // CI runners share IPs, so unauthenticated API calls run into GitHub's rate limit there.
+  if (process.env.GITHUB_TOKEN && url.startsWith("https://api.github.com/")) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`${res.status} ${url}`);
   return as === "json" ? res.json() : res.text();
 };

@@ -1,0 +1,28 @@
+# Push a tag like v0.2.0 to publish a release: the tarball with the prebuilt sidebar, the
+# installer people pipe into zsh, and checksums. Installed copies find it with their daily check.
+name: Release
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test test/*.test.mjs
+      - run: xcrun swiftc --version
+      - name: Package
+        run: scripts/package.sh "$GITHUB_REF_NAME"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Publish
+        run: gh release create "$GITHUB_REF_NAME" build/dist/* --title "Tamago $GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
