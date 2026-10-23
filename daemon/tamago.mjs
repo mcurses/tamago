@@ -12,19 +12,26 @@
 //   node daemon/tamago.mjs --mood            show the mood and what shaped it
 //   node daemon/tamago.mjs --compare [n]     replay the last n turn comments on Haiku and Sonnet
 //
-// Env overrides: TAMAGO_NAME, TAMAGO_LANG, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE,
+//   node daemon/tamago.mjs --set [key=value] show or change a setting (also: right-click Tama)
+//   node daemon/tamago.mjs --version         this version, and a newer release if there is one
+//   node daemon/tamago.mjs --update          install the newest release (release installs only)
+//
+// Env overrides: TAMAGO_NAME, TAMAGO_COOLDOWN_S, TAMAGO_POLL_MS, TAMAGO_CLAUDE,
 // TAMAGO_DELAY_S ("min-max" seconds between a turn ending and Tama reacting), TAMAGO_CHANCE.
 
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import readline from "node:readline";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { transcriptFor, transcriptForSession, transcriptsIn, turnEndsSince, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
+import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
+import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
@@ -40,7 +47,6 @@ const CLAUDE = process.env.TAMAGO_CLAUDE ?? [
   path.join(os.homedir(), ".claude/local/claude"),
 ].find((p) => fs.existsSync(p)) ?? "claude";
 const NAME = process.env.TAMAGO_NAME ?? "Tama";
-const LANG = process.env.TAMAGO_LANG ?? "English";
 const POLL_MS = Number(process.env.TAMAGO_POLL_MS ?? 3000);
 const COOLDOWN_S = Number(process.env.TAMAGO_COOLDOWN_S ?? 150);
 const SWITCH_DWELL_S = 20;
@@ -59,6 +65,12 @@ const STATE_DIR = process.env.TAMAGO_STATE_DIR ?? path.join(os.homedir(), ".loca
 const LOG = path.join(STATE_DIR, "tamago.log");
 const PIDFILE = path.join(STATE_DIR, "tamago.pid");
 const DENIED_FILE = path.join(STATE_DIR, "denied"); // pid of an instance the cmux socket refuses
+
+// Tamago's own settings (daemon/settings.mjs): how much Tama talks, its model and language, and
+// sidebar extras. Picked from Tama's right-click menu; read fresh each time, so changes apply at once.
+const SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
+const tamagoSettings = () => ({ ...settingDefaults(), ...readJson(SETTINGS_FILE) });
+const talk = () => talkProfile(tamagoSettings().talk);
 
 const args = process.argv.slice(2);
 const DRY = args.includes("--dry-run") || process.env.TAMAGO_DRY_RUN === "1"; // the env form reaches instances ensure-running.sh starts
@@ -120,7 +132,7 @@ let bubble = { at: 0, mood: "idle", about: "-", text: "-", action: null, ...read
 let lastDryLabel = null;
 let painted = null; // species + name last written, to repaint when either changes
 
-const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 // The pet's species and name, chosen from its menu or with --species / --name.
 const PET_FILE = path.join(STATE_DIR, "pet.json");
 const LEGACY_SPECIES_FILE = path.join(STATE_DIR, "species.json");
@@ -280,7 +292,7 @@ callback is fine when it fits. Vary sentence shape and length. Don't tell the ti
 when it matters (very late, very early, a weekend). Silence between remarks is normal; don't
 mention it.
 Speak as yourself, in the first person; never refer to yourself by name.
-Write in ${LANG}. At most 130 characters: the speech bubble holds no more, so make one point. No quotes, no emoji, no hashtags.
+Write in ${tamagoSettings().language}. At most 130 characters: the speech bubble holds no more, so make one point. No quotes, no emoji, no hashtags.
 Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "..."}
 "action" is a tiny stage direction of something you physically do, 2 to 6 words, third person,
 no asterisks, no name, no "you". Use your body: ${character().body}. Invent it fresh for this
@@ -344,10 +356,8 @@ function diary() {
 // it stays occasional; touches get one more often, since they're physical anyway.
 const ACTION_CHANCE = Number(process.env.TAMAGO_ACTION_CHANCE ?? 0.3);
 
-const MODEL = process.env.TAMAGO_MODEL ?? "sonnet";
-
 /** What Tama says about an event, or null if it would only repeat itself. `now` replays an older moment. */
-async function brain(event, { model = MODEL, now = Date.now() } = {}) {
+async function brain(event, { model = tamagoSettings().model, now = Date.now() } = {}) {
   const act = event.kind === "back" || Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
   const prompt = [
     `Event: ${event.kind}`,
@@ -432,7 +442,7 @@ let latestSnap = null;
 
 /** True while Tama is still quiet after the last comment. Notable turns may cut in sooner. */
 function cooling(priority) {
-  const cooldown = priority >= 3 ? COOLDOWN_S / 2 : COOLDOWN_S;
+  const cooldown = COOLDOWN_S * talk().cooldown * (priority >= 3 ? 0.5 : 1);
   return Date.now() - lastSpokeAt < cooldown * 1000;
 }
 
@@ -455,7 +465,7 @@ async function onTurnEnd(wsId) {
   // a messy diff. Strong feelings make a comment likelier; so does being chatty and awake.
   const felt = d ? feelTags(turnTags(d), w.title) : [];
   const notable = caresAbout(felt);
-  const chance = Math.min(0.95, (notable ? NOTABLE_CHANCE : CHANCE) * chattiness(mood, character()));
+  const chance = Math.min(0.95, (notable ? NOTABLE_CHANCE : CHANCE) * talk().chance * chattiness(mood, character()));
   if (Math.random() < chance) {
     const delay = DELAY_MIN_S + Math.random() * (DELAY_MAX_S - DELAY_MIN_S);
     candidates.push({ wsId, at: now, dueAt: now + delay * 1000, notable, felt });
@@ -718,7 +728,7 @@ function detect(snap) {
   }
   if (sel && !switchAnnounced && now - selectedSince > SWITCH_DWELL_S * 1000) {
     switchAnnounced = true;
-    if (Math.random() < SWITCH_CHANCE) {
+    if (Math.random() < SWITCH_CHANCE * talk().switch) {
       events.push({ kind: "switch", priority: 1, w: sel, detail: `${describe(sel)}\nThe developer just switched to this workspace and stayed.` + (sel.latest_submitted_message ? `\nLast prompt there: "${short(sel.latest_submitted_message, 150)}"` : "") });
     }
   }
@@ -727,11 +737,11 @@ function detect(snap) {
   if (sel && now - lastActivityAt > IDLE_S * 1000 && now - lastSpokeAt > IDLE_S * 1000 && idleFeltFor !== lastActivityAt) {
     idleFeltFor = lastActivityAt;
     feelTags(["idle"], "");
-    if (Math.random() < IDLE_CHANCE) {
+    if (Math.random() < IDLE_CHANCE * talk().idle) {
       events.push({ kind: "idle", priority: 1, w: sel, detail: `Nothing has happened in any session for ${Math.round((now - lastActivityAt) / 60000)} minutes.` });
     }
   }
-  if (back && sel) {
+  if (back && sel && talk().chance > 0) {
     events.push({ kind: "back", priority: 4, w: sel, detail: backDetail(back) });
     back = null;
   }
@@ -750,6 +760,13 @@ const PETNAME_MARKER = "tamago:petname";
 // Remembered on disk too, so a Rename clicked while the daemon was down doesn't lose the description.
 const DESCRIPTIONS = path.join(STATE_DIR, "descriptions.json");
 const descriptions = new Map(Object.entries(readJson(DESCRIPTIONS) ?? {})); // workspace id -> description
+
+/** Stores one setting; throws when the value isn't valid for it. Only picked settings are stored. */
+function setSetting(key, value) {
+  const parsed = parseSetting(key, value);
+  if (parsed instanceof Error) throw parsed;
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...readJson(SETTINGS_FILE), [key]: parsed }, null, 2) + "\n");
+}
 
 function readJson(file) {
   try {
@@ -923,6 +940,106 @@ async function cleanup() {
 
 // ---------- main ----------
 
+const TOKEN_FILE = path.join(STATE_DIR, "token"); // shared with the compiled sidebar, see below
+const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
+
+// ---------- updates ----------
+// A release install (scripts/install.sh from GitHub) has a VERSION file and can update itself
+// (daemon/update.mjs); a git checkout reports `git describe` and updates with git pull.
+
+const RELEASE_INSTALL = fs.existsSync(path.join(ROOT, "VERSION"));
+const VERSION = RELEASE_INSTALL
+  ? fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim()
+  : (() => {
+      try {
+        return execFileSync("git", ["-C", ROOT, "describe", "--tags", "--always", "--dirty"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return "dev";
+      }
+    })();
+const UPDATE_FILE = path.join(STATE_DIR, "update.json"); // { checkedAt, latest, tarball, announced }
+let updating = false;
+
+/** Asks GitHub for the latest release, at most daily unless `force`d. Returns the stored result. */
+async function checkForUpdate({ force = false } = {}) {
+  const u = readJson(UPDATE_FILE) ?? {};
+  if (!force && (!RELEASE_INSTALL || !tamagoSettings().checkUpdates || Date.now() - (u.checkedAt ?? 0) < 24 * 3600_000)) return u;
+  const r = await latestRelease();
+  const next = { ...u, checkedAt: Date.now(), latest: r?.version ?? null, tarball: r?.tarball ?? null };
+  fs.writeFileSync(UPDATE_FILE, JSON.stringify(next));
+  return next;
+}
+
+const availableUpdate = () => {
+  const u = readJson(UPDATE_FILE);
+  return u?.latest && u.tarball && newer(VERSION, u.latest) ? u : null;
+};
+
+/** Says once per release that there is one, unless muted, away or someone else is talking. */
+async function announceUpdate() {
+  const u = availableUpdate();
+  const sel = latestSnap?.workspaces.find((w) => w.selected);
+  if (!u || u.announced === u.latest || !sel || awaySince || talk().chance === 0 || cooling(1)) return;
+  fs.writeFileSync(UPDATE_FILE, JSON.stringify({ ...u, announced: u.latest }));
+  await say(sel, "happy", `There's a newer me out, ${u.latest}. Right-click me and pick Update.`);
+}
+
+/** Installs the newest release, then hands over to its install.sh, which restarts the daemon. */
+async function runUpdate() {
+  if (!RELEASE_INSTALL) throw new Error("this is a git checkout; update it with git pull and scripts/install.sh");
+  if (updating) return;
+  const u = availableUpdate() ?? (await checkForUpdate({ force: true }), availableUpdate());
+  if (!u) return log(`already up to date (${VERSION})`);
+  updating = true;
+  try {
+    log(`updating ${VERSION} → ${u.latest}`);
+    await installRelease({ version: u.latest, tarball: u.tarball }, ROOT);
+  } catch (err) {
+    updating = false;
+    throw err;
+  }
+  // A detached child keeps the cmux socket access this daemon has, so the new one can talk to cmux.
+  const out = fs.openSync(path.join(STATE_DIR, "daemon.out"), "a");
+  spawn("/bin/zsh", [path.join(ROOT, "scripts/install.sh"), "--after-update", String(process.pid)], { detached: true, stdio: ["ignore", out, out] }).unref();
+  log(`installed ${u.latest}; restarting`);
+  setTimeout(async () => {
+    await cleanup();
+    process.exit(0);
+  }, 300);
+}
+
+if (args[0] === "--version") {
+  if (RELEASE_INSTALL) await checkForUpdate({ force: true }).catch((err) => console.error(err.message));
+  const u = availableUpdate();
+  console.log(VERSION + (u ? ` (${u.latest} is out: tamago update)` : ""));
+  process.exit(0);
+}
+
+if (args[0] === "--update") {
+  if (!RELEASE_INSTALL) {
+    console.error(`${VERSION} is a git checkout; update it with: git -C ${ROOT} pull && ${ROOT}/scripts/install.sh`);
+    process.exit(1);
+  }
+  await checkForUpdate({ force: true });
+  const u = availableUpdate();
+  if (!u) {
+    console.log(`up to date (${VERSION})`);
+    process.exit(0);
+  }
+  // The running daemon installs it, so it can restart itself afterwards.
+  const res = await fetch(`http://127.0.0.1:${PORT}/action`, {
+    method: "POST",
+    headers: { "x-tamago-token": fs.readFileSync(TOKEN_FILE, "utf8").trim(), "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "update" }),
+  }).catch(() => null);
+  if (!res?.ok) {
+    console.error("the daemon isn't running; start it from a cmux terminal (scripts/ensure-running.sh) and try again");
+    process.exit(1);
+  }
+  console.log(`updating ${VERSION} → ${u.latest}; Tama restarts in a few seconds (log: ${LOG})`);
+  process.exit(0);
+}
+
 if (args[0] === "--peek") {
   // Print what Tama would see for the focused workspace (and, with --brain, what it would say).
   const snap = await snapshot();
@@ -1012,6 +1129,22 @@ if (args[0] === "--species") {
   process.exit(0);
 }
 
+if (args[0] === "--set") {
+  if (!args[1]) {
+    for (const [k, v] of Object.entries(tamagoSettings())) console.log(`${k}=${v}`);
+    process.exit(0);
+  }
+  const [key, ...rest] = args[1].split("=");
+  try {
+    setSetting(key, rest.join("="));
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  console.log(`${key}=${tamagoSettings()[key]}`);
+  process.exit(0);
+}
+
 if (args[0] === "--say") {
   const snap = await snapshot();
   latestSnap = snap;
@@ -1037,11 +1170,9 @@ fs.writeFileSync(PIDFILE, String(process.pid));
 // from here. Requests carry the token below; the extension reads the same file through a read-only
 // sandbox exception.
 
-const TOKEN_FILE = path.join(STATE_DIR, "token");
 if (!DRY && !fs.existsSync(TOKEN_FILE)) {
   fs.writeFileSync(TOKEN_FILE, crypto.randomBytes(24).toString("hex") + "\n", { mode: 0o600 });
 }
-const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
 
 const round1 = (x) => Math.round(x * 10) / 10;
 
@@ -1103,12 +1234,6 @@ function watchSidebarEvents() {
     setTimeout(watchSidebarEvents, 10_000);
   });
 }
-
-// Tamago's own sidebar settings, for things cmux's Settings don't cover. Toggled from Tama's
-// right-click menu (Sidebar submenu).
-const SETTINGS_FILE = path.join(STATE_DIR, "settings.json");
-const TAMAGO_SETTINGS = { claudeDots: true };
-const tamagoSettings = () => ({ ...TAMAGO_SETTINGS, ...readJson(SETTINGS_FILE) });
 
 // Interactive Claude Code sessions per workspace, for the sidebar's session dots. Every `claude`
 // process with its own terminal counts once per terminal (Tama's own `claude -p` has none); its
@@ -1176,6 +1301,7 @@ function sidebarState() {
     reaction,
     settings: sidebarSettings,
     tamagoSettings: tamagoSettings(),
+    version: { current: VERSION, latest: availableUpdate()?.latest ?? null, updating },
     workspaces,
   };
 }
@@ -1251,9 +1377,16 @@ async function sidebarAction(a) {
     if (inCmux) await cmux("browser", "open", url.href, ...(a.workspace ? ["--workspace", ws(a.workspace)] : []));
     else await run("open", [url.href]);
   } else if (a.type === "tamago-setting") {
-    if (!(a.key in TAMAGO_SETTINGS)) throw new Error(`unknown setting ${a.key}`);
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ...tamagoSettings(), [a.key]: a.value === "true" || a.value === true }));
+    setSetting(a.key, a.value);
     await countClaudeSessions().catch(() => {});
+  } else if (a.type === "check-update") {
+    await checkForUpdate({ force: true });
+    if (!availableUpdate()) {
+      const sel = latestSnap?.workspaces.find((w) => w.selected);
+      if (sel) await say(sel, "smug", RELEASE_INSTALL ? `I'm the newest me there is, ${VERSION}.` : `I'm ${VERSION}, straight from git. Pull to update me.`);
+    }
+  } else if (a.type === "update") {
+    await runUpdate();
   } else if (a.type === "touch") {
     if (!["feed", "pet", "poke"].includes(a.kind)) throw new Error(`unknown touch ${a.kind}`);
     await onTouch(a.kind);
@@ -1271,6 +1404,18 @@ if (!DRY) {
   setInterval(() => readListening().catch((err) => log("reading ports failed:", err.message)), 10_000);
   setInterval(() => countClaudeSessions().catch((err) => log("counting Claude sessions failed:", err.message)), 10_000);
   startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
+  // Hourly, but checkForUpdate asks GitHub at most once a day.
+  let told = null;
+  const updates = () =>
+    checkForUpdate()
+      .then(() => {
+        const u = availableUpdate();
+        if (u && told !== u.latest) log(`update available: ${VERSION} → ${(told = u.latest)}`);
+        return announceUpdate();
+      })
+      .catch((err) => log("update check failed:", err.message));
+  setTimeout(updates, 60_000);
+  setInterval(updates, 3600_000);
 }
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
@@ -1281,7 +1426,7 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-log(`${petName()} is awake (poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
+log(`${petName()} is awake (${VERSION}, poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
 await tick();
 watchAgentEvents();
 setInterval(() => {

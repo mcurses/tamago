@@ -513,13 +513,11 @@ struct PetFooter: View {
         Button("Pet \(name)") { model.act("touch", ["kind": "pet"]) }
         Button("Poke \(name)") { model.act("touch", ["kind": "poke"]) }
         Divider()
-        Button("Rename \(name)…") { renaming = true }
-        Menu("Sidebar") {
-            let dots = model.daemon?.tamagoSettings?.claudeDots ?? true
-            Button(dots ? "✓ Claude Session Dots" : "Claude Session Dots") {
-                model.act("tamago-setting", ["key": "claudeDots", "value": dots ? "false" : "true"])
+        Menu("Talk") {
+            let talk = settings?.talk ?? "normal"
+            ForEach([("chatty", "Chatty"), ("normal", "Normal"), ("quiet", "Quiet"), ("muted", "Muted (only answers Feed, Pet, Poke)")], id: \.0) { key, label in
+                Button(checked(talk == key, label)) { model.act("tamago-setting", ["key": "talk", "value": key]) }
             }
-            Text("Everything else: cmux Settings → Sidebar")
         }
         Menu("Species") {
             ForEach(Pet.speciesNames, id: \.self) { species in
@@ -528,7 +526,56 @@ struct PetFooter: View {
                 }
             }
         }
+        Button("Rename \(name)…") { renaming = true }
+        Menu("Settings") {
+            Menu("Model") {
+                let current = settings?.model ?? "sonnet"
+                ForEach([("haiku", "Haiku (lightest on your usage)"), ("sonnet", "Sonnet"), ("opus", "Opus (heaviest on your usage)")], id: \.0) { key, label in
+                    Button(checked(current == key, label)) { model.act("tamago-setting", ["key": "model", "value": key]) }
+                }
+            }
+            Menu("Language") {
+                let current = settings?.language ?? "English"
+                ForEach(Self.languages, id: \.0) { key, label in
+                    Button(checked(current == key, label)) { model.act("tamago-setting", ["key": "language", "value": key]) }
+                }
+                if !Self.languages.contains(where: { $0.0 == current }) { Button(checked(true, current)) {} }
+            }
+            let dots = settings?.claudeDots ?? true
+            Button(checked(dots, "Claude Session Dots")) {
+                model.act("tamago-setting", ["key": "claudeDots", "value": dots ? "false" : "true"])
+            }
+            let updates = settings?.checkUpdates ?? true
+            Button(checked(updates, "Check for Updates Daily")) {
+                model.act("tamago-setting", ["key": "checkUpdates", "value": updates ? "false" : "true"])
+            }
+            Divider()
+            Text("Workspace details: cmux Settings → Sidebar")
+        }
+        if let version = model.daemon?.version {
+            Divider()
+            if let latest = version.latest {
+                if version.updating == true {
+                    Text("Updating to \(latest)…")
+                } else {
+                    Button("Update Tamago to \(latest)") { model.act("update") }
+                }
+            } else {
+                Button("Tamago \(version.current): Check for Updates") { model.act("check-update") }
+            }
+        }
     }
+
+    private var settings: DaemonState.TamagoSettings? { model.daemon?.tamagoSettings }
+
+    private func checked(_ on: Bool, _ label: String) -> String { on ? "✓ " + label : label }
+
+    /// Stored as the English name, which is what the prompt says; shown in its own language.
+    static let languages = [
+        ("English", "English"), ("German", "Deutsch"), ("Spanish", "Español"), ("French", "Français"),
+        ("Italian", "Italiano"), ("Portuguese", "Português"), ("Dutch", "Nederlands"), ("Polish", "Polski"),
+        ("Japanese", "日本語"), ("Korean", "한국어"), ("Chinese", "中文"),
+    ]
 
     private func ago(_ seconds: Double) -> String {
         if seconds < 60 { return "just now" }
