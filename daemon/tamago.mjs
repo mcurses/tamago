@@ -85,10 +85,23 @@ async function progressOf(workspaceId) {
   return line ? line.slice("progress=".length) : "none";
 }
 
-/** Bubble text that's too long ends at a word with "…", not mid-word. */
-function fit(text, max = 140) {
-  const t = String(text).replace(/[|\n\r]+/g, " ").replace(/\s+/g, " ").trim();
+// What the speech bubble shows in full: 5 lines of about 38 characters at the usual sidebar
+// width, minus room for the action line.
+const BUBBLE_CHARS = 150;
+
+/** One line of text: no newlines and no "|" (the interpreted sidebar's label separator). */
+const flat = (text) => String(text).replace(/[|\n\r]+/g, " ").replace(/\s+/g, " ").trim();
+
+/** Whole sentences that fit the bubble; a single sentence that's too long ends at a word with "…". */
+function sentencesThatFit(text, max = BUBBLE_CHARS) {
+  const t = flat(text);
   if (t.length <= max) return t;
+  let out = "";
+  for (const sentence of t.match(/[^.!?…]+[.!?…]+["')\]]*\s*|[^.!?…]+$/g) ?? [t]) {
+    if ((out + sentence).trim().length > max) break;
+    out += sentence;
+  }
+  if (out.trim()) return out.trim();
   return t.slice(0, max - 1).replace(/\s+\S*$/, "").replace(/[\s,;:.-]+$/, "") + "…";
 }
 
@@ -218,7 +231,7 @@ async function say(about, mood, text, action = null) {
     at: Date.now(),
     mood: MOODS.includes(mood) ? mood : "idle",
     about: clean(about.title).slice(0, 40) || "-",
-    text: clean(text) || "-",
+    text: sentencesThatFit(text) || "-",
     action: action ? clean(action).replace(/^\*+|\*+$/g, "").slice(0, 40) || null : null,
     species: chosenSpecies(),
   };
@@ -266,7 +279,7 @@ callback is fine when it fits. Vary sentence shape and length. Don't tell the ti
 when it matters (very late, very early, a weekend). Silence between remarks is normal; don't
 mention it.
 Speak as yourself, in the first person; never refer to yourself by name.
-Write in ${LANG}. Max 110 characters. No quotes, no emoji, no hashtags.
+Write in ${LANG}. At most 130 characters: the speech bubble holds no more, so make one point. No quotes, no emoji, no hashtags.
 Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "..."}
 "action" is a tiny stage direction of something you physically do, 2 to 6 words, third person,
 no asterisks, no name, no "you". Use your body: ${character().body}. Invent it fresh for this
@@ -347,28 +360,35 @@ async function brain(event, { model = MODEL, now = Date.now() } = {}) {
       ? "This time, include an action that fits the moment and your mood (not one from your diary)."
       : 'This time, no action: "action": null.',
   ].filter(Boolean).join("\n");
-  // Once a phrase is in the diary, Haiku likes to echo it. A line too close to a recent one gets
-  // one retry with the echo pointed out; if that repeats too, Tama stays quiet (null).
+  // Once a phrase is in the diary, the model likes to echo it, and it doesn't count characters
+  // well. A line too close to a recent one or too long for the bubble gets up to two retries with
+  // the problem pointed out. Still echoing: Tama stays quiet (null). Still too long: whole
+  // sentences that fit, so the bubble never shows a cut-off thought.
   const recent = ownRecent().map((h) => h.text);
-  let echo = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const extra = echo
-      ? `\nToo close to what you said before: "${echo}". Pick a different subject and a different sentence shape; don't reuse its words or images.`
-      : "";
+  let problem = "";
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
     let out;
     try {
-      out = await ask(prompt + extra, model);
+      out = await ask(prompt + problem, model);
     } catch (err) {
       log("brain failed, using canned line:", err.message?.split("\n")[0]);
-      return canned(event.kind);
+      return last ?? canned(event.kind);
     }
-    const text = fit(out.text);
-    echo = repeats(text, recent);
+    const text = flat(out.text);
     const action = act && out.action ? clean(out.action).replace(/^\p{Lu}(?=\p{Ll})/u, (c) => c.toLowerCase()) : null;
-    if (!echo) return { mood: out.mood, text, action };
-    log("repeats itself:", JSON.stringify(text));
+    const echo = repeats(text, recent);
+    if (echo) {
+      log("repeats itself:", JSON.stringify(text));
+      problem = `\nToo close to what you said before: "${echo}". Pick a different subject and a different sentence shape; don't reuse its words or images.`;
+      continue;
+    }
+    last = { mood: out.mood, text: sentencesThatFit(text), action };
+    if (text.length <= BUBBLE_CHARS) return last;
+    log(`too long (${text.length}):`, JSON.stringify(text));
+    problem = `\nThat was ${text.length} characters: "${text}". The bubble holds ${BUBBLE_CHARS}. Say the same thing in fewer words.`;
   }
-  return null;
+  return last;
 }
 
 async function ask(prompt, model) {
