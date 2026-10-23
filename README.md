@@ -290,3 +290,8 @@ coding-buddy contributors), an open-source recreation of Claude Code's `/buddy`.
 kept in `sidebar/species.json`. The prebuilt `Tamago.app` contains cmux's CmuxExtensionKit
 (GPL-3.0-or-later, © Manaflow, Inc.); its license and a link to its source ship in the release's
 `third-party/` folder.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The release's `Tamago.app` also contains CmuxExtensionKit, so that
+binary as a whole is distributed under GPL-3.0-or-later; this repository is its source.

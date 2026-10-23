@@ -21,7 +21,7 @@ cp -R $ROOT/daemon $ROOT/sidebar $STAGE/
 mkdir -p $STAGE/scripts
 cp $ROOT/scripts/{install,install-app,uninstall,ensure-running}.sh $STAGE/scripts/
 cp -R $ROOT/build/Tamago.app $STAGE/
-cp $ROOT/README.md $ROOT/LICENSE $ROOT/VERSION $STAGE/ 2>/dev/null || cp $ROOT/README.md $ROOT/VERSION $STAGE/
+cp $ROOT/README.md $ROOT/LICENSE $ROOT/VERSION $STAGE/
 # Tamago.app links cmux's CmuxExtensionKit (GPL-3.0-or-later); its license and source travel along.
 mkdir -p $STAGE/third-party/CmuxExtensionKit
 cp $ROOT/build/cmux-sdk/LICENSE $STAGE/third-party/CmuxExtensionKit/LICENSE
