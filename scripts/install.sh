@@ -50,24 +50,25 @@ if ! command -v claude >/dev/null && [[ ! -x ~/.claude/local/claude ]]; then
   say "warning: no claude command found. Tama writes its remarks with Claude Code (https://claude.com/claude-code); install it and log in."
 fi
 
-# --- sidebars -----------------------------------------------------------------------------------
-mkdir -p ~/.config/cmux/sidebars $STATE
-ln -sf $ROOT/sidebar/tamago.swift ~/.config/cmux/sidebars/tamago.swift
-COMPILED=no
+# --- the sidebar --------------------------------------------------------------------------------
+mkdir -p $STATE
+# Older versions also linked a script sidebar, which cmux lists as "Tamago" next to the real one.
+[[ -L ~/.config/cmux/sidebars/tamago.swift ]] && rm ~/.config/cmux/sidebars/tamago.swift
 if [[ -d $ROOT/Tamago.app ]]; then
   APP=$ROOT/Tamago.app            # a release: prebuilt
-elif [[ -d $ROOT/build/Tamago.app ]]; then
-  APP=$ROOT/build/Tamago.app      # a checkout where scripts/build-extension.sh ran
 else
-  APP=""
-fi
-if [[ -n $APP ]]; then
-  COMPILED=yes
-  if [[ -n $TEST ]]; then
-    mkdir -p ~/Applications && rsync -a --delete $APP/ ~/Applications/Tamago.app/
-  else
-    $ROOT/scripts/install-app.sh $APP | sed 's/^/tamago: /'
+  # A checkout: build it unless scripts/build-extension.sh already did.
+  if [[ ! -d $ROOT/build/Tamago.app && -z $AFTER_UPDATE ]]; then
+    xcrun --find swiftc >/dev/null 2>&1 || die "building the sidebar from a checkout needs Xcode; or install a release (see README)"
+    say "building the sidebar (about a minute)"
+    $ROOT/scripts/build-extension.sh --no-install | sed 's/^/tamago: /'
   fi
+  APP=$ROOT/build/Tamago.app
+fi
+if [[ -n $TEST ]]; then
+  mkdir -p ~/Applications && rsync -a --delete $APP/ ~/Applications/Tamago.app/
+else
+  $ROOT/scripts/install-app.sh $APP | sed 's/^/tamago: /'
 fi
 
 # --- start it with every cmux terminal ----------------------------------------------------------
@@ -134,17 +135,11 @@ $ROOT/scripts/ensure-running.sh
 # --- what's next --------------------------------------------------------------------------------
 say "Tamago $VERSION is installed and running."
 [[ :$PATH: == *:$HOME/.local/bin:* ]] || say "add ~/.local/bin to your PATH to use the tamago command."
-if [[ $COMPILED == yes ]]; then
-  ENABLED=$(defaults read com.cmuxterm.app extensions.beta.enabled 2>/dev/null || echo 0)
-  print "\nShow Tama in cmux's sidebar (once):"
-  [[ $ENABLED == 1 ]] || print "  - In the Settings window that opens: Custom Sidebars → turn on Extensions."
-  print "  - Right-click the sidebar toggle button (top left) → Extension Sidebar.
+ENABLED=$(defaults read com.cmuxterm.app extensions.beta.enabled 2>/dev/null || echo 0)
+print "\nShow Tama in cmux's sidebar (once):"
+[[ $ENABLED == 1 ]] || print "  - In the Settings window that opens: Custom Sidebars → turn on Extensions."
+print "  - Right-click the sidebar toggle button (top left) → Extension Sidebar.
   - If it says Tamago needs approval: Manage → switch Tamago on → Review Access… → Allow Requested Access.
-Then right-click Tama to feed it, pick a species, or set how much it talks."
-  [[ -n $TEST || $ENABLED == 1 ]] || $CMUX settings open custom-sidebars >/dev/null 2>&1 || true
-else
-  [[ -n $TEST ]] || $CMUX sidebar select tamago >/dev/null
-  print "
-Tama is in cmux's left sidebar now (the script sidebar). For the smoother compiled one, run
-scripts/build-extension.sh (needs Xcode), or install a release instead of a checkout."
-fi
+Then right-click Tama to feed it, pick a species, or set how much it talks.
+If the sidebar ever says Lost Connection or Extension Blocked (after an update): click Try Again."
+[[ -n $TEST || $ENABLED == 1 ]] || $CMUX settings open custom-sidebars >/dev/null 2>&1 || true

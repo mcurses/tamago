@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Remove Tamago: stop the daemon (it clears its own comments on SIGTERM), unlink the script sidebar,
-# unregister and delete the compiled one, drop the start line from your shell's startup file and
+# Remove Tamago: stop the daemon, unregister and delete the sidebar (and the script sidebar older
+# versions linked), drop the start line from your shell's startup file and
 # the tamago command. Tama's memory in ~/.local/state/tamago stays unless you pass --forget.
 #
 # TAMAGO_TEST=1 touches nothing outside $HOME (no pluginkit), for tests.

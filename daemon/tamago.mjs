@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Tamago daemon: watches every cmux workspace, occasionally asks Haiku for a snarky one-liner
-// about one of them, and hands it to the sidebar through a single workspace progress label
-// ("tamago|<epoch>|<mood>|<about>|<text>") that the sidebar shows no matter which workspace is open.
+// Tamago daemon: watches every cmux workspace, now and then asks Claude for a one-liner about one
+// of them, and serves it to the compiled sidebar (extension/) on 127.0.0.1, so the bubble shows no
+// matter which workspace is open.
 //
 //   node daemon/tamago.mjs            run in the foreground
-//   node daemon/tamago.mjs --say "…"  push one comment and exit (manual test)
+//   node daemon/tamago.mjs --say "…"  have the running daemon say something (manual test)
 //   node daemon/tamago.mjs --dry-run  log what would be said, don't touch cmux
 //   node daemon/tamago.mjs --peek [--diary] [--brain]  show Tama's context for the focused workspace
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
@@ -102,7 +102,7 @@ async function progressOf(workspaceId) {
 // width, minus room for the action line.
 const BUBBLE_CHARS = 150;
 
-/** One line of text: no newlines and no "|" (the interpreted sidebar's label separator). */
+/** One line of text: no newlines, no "|" and no runs of spaces. */
 const flat = (text) => String(text).replace(/[|\n\r]+/g, " ").replace(/\s+/g, " ").trim();
 
 /** Whole sentences that fit the bubble; a single sentence that's too long ends at a word with "…". */
@@ -122,15 +122,9 @@ function clean(text) {
   return String(text).replace(/[|\n\r]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
 }
 
-// Tama has one global speech bubble. Its label lives on one "carrier" workspace (preferably the one
-// the comment is about) and the sidebar finds it wherever it is, so switching never hides it.
-// The label stays even without a comment (epoch 0) because it also carries the chosen species.
-let carrier = null;
-// The bubble survives restarts on disk; the label itself is cleared when the daemon stops.
+// Tama has one global speech bubble, which the sidebar reads from GET /state. It survives restarts.
 const BUBBLE_FILE = path.join(STATE_DIR, "bubble.json");
 let bubble = { at: 0, mood: "idle", about: "-", text: "-", action: null, ...readJson(BUBBLE_FILE) };
-let lastDryLabel = null;
-let painted = null; // species + name last written, to repaint when either changes
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 // The pet's species and name, chosen from its menu or with --species / --name.
@@ -197,49 +191,17 @@ function turnTags(d) {
   ].filter(Boolean);
 }
 
-const isOurs = (progress) => progress === "none" || progress.includes("tamago|");
-
-/** Write the bubble label, moving it to a free workspace if the preferred one shows real progress. */
-async function paint(preferId) {
-  const pet = `${chosenSpecies()}|${petName()}`;
-  // A new species is a different Tama: the last one's words leave with it, events stay.
+/** The bubble, minus a remark by another species: a new species is a different Tama, whose
+ * predecessor's words leave with it (events stay). */
+function currentBubble() {
   if (bubble.at && bubble.species !== chosenSpecies()) {
     bubble = { at: 0, mood: "idle", about: "-", text: "-", action: null };
     if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
   }
-  const text = bubble.action ? clean(`*${bubble.action}* ${bubble.text}`) : bubble.text; // the interpreted sidebar has one text field
-  const label = `tamago|${Math.floor(bubble.at / 1000)}|${bubble.mood}|${bubble.about}|${text}|${pet}`;
-  if (DRY) {
-    if (pet !== painted || label !== lastDryLabel) log("dry-run paint", label);
-    lastDryLabel = label;
-    painted = pet;
-    return true;
-  }
-  // Never clobber real progress some agent reported; carry the label on a free workspace instead.
-  const ids = [preferId, carrier, ...(latestSnap?.workspaces ?? []).map((w) => w.id)].filter(Boolean);
-  let target = null;
-  for (const id of new Set(ids)) {
-    if (isOurs(await progressOf(id))) {
-      target = id;
-      break;
-    }
-  }
-  if (!target) {
-    log("skip: every workspace shows real progress");
-    return false;
-  }
-  if (carrier && carrier !== target && (await progressOf(carrier).catch(() => "")).includes("tamago|")) {
-    await cmux("clear-progress", "--workspace", carrier).catch(() => {});
-  }
-  await cmux("set-progress", "0", "--label", label, "--workspace", target);
-  carrier = target;
-  painted = pet;
-  spokenTo.add(target);
-  return true;
+  return bubble;
 }
 
 async function say(about, mood, text, action = null) {
-  // Empty fields would vanish when the sidebar splits the label and shift the rest, hence "-".
   bubble = {
     at: Date.now(),
     mood: MOODS.includes(mood) ? mood : "idle",
@@ -249,28 +211,16 @@ async function say(about, mood, text, action = null) {
     species: chosenSpecies(),
   };
   if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
-  const ok = await paint(about.id);
-  if (ok) log("say", about.title, carrier === about.id ? "" : `(carried by ${carrier})`, bubble.action ? `*${bubble.action}*` : "", JSON.stringify(bubble.text));
-  return ok;
+  log(DRY ? "say (dry-run)" : "say", about.title, bubble.action ? `*${bubble.action}*` : "", JSON.stringify(bubble.text));
+  return true;
 }
 
-/** An earlier instance may have left labels behind; keep the newest as the bubble, clear the rest. */
-async function adoptBubble(snap) {
-  const found = [];
+/** Versions before 0.1 showed the bubble to the script sidebar as a workspace progress label;
+ * clear any such label one of them left behind, since cmux's own sidebar shows it as progress. */
+async function clearOldLabels(snap) {
   for (const w of snap.workspaces) {
-    const p = await progressOf(w.id).catch(() => "");
-    const m = p.match(/tamago\|(\d+)\|([^|]*)\|([^|]*)\|([^|]*)(?:\|([^|]*))?/);
-    if (m) found.push({ id: w.id, at: Number(m[1]) * 1000, mood: m[2], about: m[3], text: m[4], species: m[5] ?? null });
+    if ((await progressOf(w.id).catch(() => "")).includes("tamago|")) await cmux("clear-progress", "--workspace", w.id).catch(() => {});
   }
-  found.sort((a, b) => b.at - a.at);
-  for (const f of found.slice(1)) await cmux("clear-progress", "--workspace", f.id).catch(() => {});
-  if (found[0]) {
-    const { id, ...rest } = found[0];
-    carrier = id;
-    bubble = rest;
-  }
-  // Repaint in the current format, so the species shows even before Tama's first comment.
-  await paint(carrier ?? snap.workspaces.find((w) => w.selected)?.id);
 }
 
 // ---------- the brain ----------
@@ -600,7 +550,6 @@ function watchTurns() {
   }
 }
 
-const spokenTo = new Set();
 let selectedId = null;
 let selectedSince = Date.now();
 let switchAnnounced = true;
@@ -611,7 +560,7 @@ let busy = false;
 let failures = 0;
 let denied = 0; // consecutive "Access denied" replies
 let idleFeltFor = 0;
-let adopted = false; // whether we've taken over a bubble left by an earlier instance
+let adopted = false; // whether the old-label cleanup has run
 
 function short(s, n = 300) {
   // Not clean(): that caps at 140 for the bubble, which cut the agent's last words short here.
@@ -748,19 +697,6 @@ function detect(snap) {
   return events.sort((a, b) => b.priority - a.priority)[0];
 }
 
-// ---------- sidebar requests ----------
-// Sidebars have no text input or storage, so their menu items set the workspace description to a
-// marker. We restore the previous description and act on it: Rename asks for the new name in a
-// native dialog, a species pick is stored in ~/.local/state/tamago/species.json.
-
-const MARKER_PREFIX = "tamago:";
-const RENAME_MARKER = "tamago:rename";
-const SPECIES_MARKER = "tamago:species:"; // from the species menu, or `--species <name>`
-const PETNAME_MARKER = "tamago:petname";
-// Remembered on disk too, so a Rename clicked while the daemon was down doesn't lose the description.
-const DESCRIPTIONS = path.join(STATE_DIR, "descriptions.json");
-const descriptions = new Map(Object.entries(readJson(DESCRIPTIONS) ?? {})); // workspace id -> description
-
 /** Stores one setting; throws when the value isn't valid for it. Only picked settings are stored. */
 function setSetting(key, value) {
   const parsed = parseSetting(key, value);
@@ -775,92 +711,6 @@ function readJson(file) {
     return null;
   }
 }
-let renaming = false;
-
-async function askName(prompt, current) {
-  const script = [
-    "on run argv",
-    "  tell current application to activate",
-    '  set r to display dialog (item 1 of argv) default answer (item 2 of argv) with title "Tamago" buttons {"Cancel", "Rename"} default button "Rename" cancel button "Cancel"',
-    "  return text returned of r",
-    "end run",
-  ];
-  try {
-    const { stdout } = await run("osascript", [...script.flatMap((l) => ["-e", l]), prompt, current], { timeout: 300_000 });
-    return stdout.replace(/\n$/, "");
-  } catch (err) {
-    // osascript exits 1 with "User canceled. (-128)" on Cancel; anything else is a real failure.
-    if (!String(err.stderr).includes("-128")) log("rename dialog failed:", String(err.stderr || err.message).trim());
-    return null;
-  }
-}
-
-async function restoreDescription(w) {
-  const previous = descriptions.get(w.id) ?? null;
-  if (previous) await cmux("workspace-action", "--action", "set-description", "--description", previous, "--workspace", w.id);
-  else await cmux("workspace-action", "--action", "clear-description", "--workspace", w.id);
-}
-
-async function handleRequests(snap) {
-  for (const w of snap.workspaces) {
-    const marker = w.description ?? "";
-    if (!marker.startsWith(MARKER_PREFIX)) {
-      if (descriptions.get(w.id) !== (w.description ?? null)) {
-        descriptions.set(w.id, w.description ?? null);
-        fs.writeFileSync(DESCRIPTIONS, JSON.stringify(Object.fromEntries(descriptions)));
-      }
-      continue;
-    }
-    if (marker.startsWith(SPECIES_MARKER)) {
-      const species = marker.slice(SPECIES_MARKER.length);
-      try {
-        await restoreDescription(w);
-        if (SPECIES.includes(species)) {
-          writePet({ species });
-          log("species set to", species);
-          await paint();
-        }
-      } catch (err) {
-        log("species request failed:", err.message?.split("\n")[0]);
-      }
-      continue;
-    }
-    if (marker === PETNAME_MARKER && !renaming) {
-      renaming = true;
-      try {
-        await restoreDescription(w);
-        const name = await askName(`Rename ${petName()}`, petName());
-        if (name && clean(name)) {
-          writePet({ name: clean(name).slice(0, 24) });
-          log("pet renamed to", petName());
-          await paint();
-        }
-      } catch (err) {
-        log("pet rename failed:", err.message?.split("\n")[0]);
-      } finally {
-        renaming = false;
-      }
-      continue;
-    }
-    if (marker !== RENAME_MARKER || renaming) continue;
-    renaming = true;
-    try {
-      await restoreDescription(w);
-      log("rename requested", w.title);
-      askName("Rename workspace", w.title).then(async (title) => {
-        log("rename dialog returned", JSON.stringify(title));
-        if (title && title.trim() && title !== w.title) {
-          await cmux("workspace-action", "--action", "rename", "--title", title.trim(), "--workspace", w.id);
-          log("renamed", w.title, "->", title.trim());
-        }
-      }).catch((err) => log("rename failed:", err.message)).finally(() => { renaming = false; });
-    } catch (err) {
-      renaming = false;
-      log("rename request failed:", err.message?.split("\n")[0]);
-    }
-  }
-}
-
 let lastTickAt = 0;
 
 async function tick() {
@@ -893,12 +743,10 @@ async function tick() {
   failures = 0;
   if (denied >= 20) fs.rmSync(DENIED_FILE, { force: true });
   denied = 0;
-  if (!adopted) {
+  if (!adopted && !DRY) {
     adopted = true;
-    await adoptBubble(snap).catch((err) => log("adopting bubble failed:", err.message));
+    await clearOldLabels(snap).catch((err) => log("clearing old labels failed:", err.message));
   }
-  await handleRequests(snap).catch((err) => log("requests failed:", err.message));
-  if (`${chosenSpecies()}|${petName()}` !== painted) await paint().catch((err) => log("paint failed:", err.message));
   await checkPresence();
   const event = detect(snap);
   if (!event || (event.kind !== "back" && cooling(event.priority))) return;
@@ -923,14 +771,6 @@ async function tick() {
 }
 
 async function cleanup() {
-  // Refused by the socket: clearing the bubble labels would only time out, and ensure-running.sh
-  // is waiting to start the replacement.
-  if (denied >= 20) spokenTo.clear();
-  for (const id of spokenTo) {
-    try {
-      if ((await progressOf(id)).includes("tamago|")) await cmux("clear-progress", "--workspace", id);
-    } catch {}
-  }
   // Only our own: a replacement may already have written its pid.
   try {
     if (Number(fs.readFileSync(PIDFILE, "utf8")) === process.pid) fs.unlinkSync(PIDFILE);
@@ -1108,7 +948,7 @@ if (args[0] === "--mood") {
 }
 
 if (args[0] === "--name") {
-  // Like --species: the running daemon repaints within one poll.
+  // Like --species: the sidebar shows it with its next read of the daemon's state.
   if (!args[1]) {
     console.log(petName());
     process.exit(0);
@@ -1119,7 +959,7 @@ if (args[0] === "--name") {
 }
 
 if (args[0] === "--species") {
-  // The running daemon notices the change within one poll and repaints the label.
+  // The daemon reads pet.json fresh, so the sidebar shows the change within a second.
   if (!SPECIES.includes(args[1])) {
     console.log(`current: ${chosenSpecies()}\navailable: ${SPECIES.join(", ")}`);
     process.exit(args[1] ? 1 : 0);
@@ -1146,11 +986,16 @@ if (args[0] === "--set") {
 }
 
 if (args[0] === "--say") {
-  const snap = await snapshot();
-  latestSnap = snap;
-  await adoptBubble(snap);
-  const sel = snap.workspaces.find((w) => w.selected);
-  await say(sel, args[2] ?? "smug", args[1] ?? "Testing, testing. Is this thing on?");
+  // The bubble lives in the running daemon, so it says it.
+  const res = await fetch(`http://127.0.0.1:${PORT}/action`, {
+    method: "POST",
+    headers: { "x-tamago-token": fs.readFileSync(TOKEN_FILE, "utf8").trim(), "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "say", text: args[1] ?? "Testing, testing. Is this thing on?", mood: args[2] ?? "smug" }),
+  }).catch(() => null);
+  if (!res?.ok) {
+    console.error("the daemon isn't running; start it from a cmux terminal (scripts/ensure-running.sh)");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -1274,8 +1119,8 @@ async function countClaudeSessions() {
   claudeSessions = counts;
 }
 
-// Markers the interpreted sidebar's menus leave in descriptions for a moment; not worth showing.
-const shownDescription = (d) => (d && !d.startsWith(MARKER_PREFIX) ? d : null);
+// Markers the old script sidebar's menus left in descriptions (tamago:rename, …); not worth showing.
+const shownDescription = (d) => (d && !d.startsWith("tamago:") ? d : null);
 
 function sidebarState() {
   stateReadAt = Date.now();
@@ -1295,7 +1140,7 @@ function sidebarState() {
   const { name, eye } = moodName(m);
   return {
     pet: { species: chosenSpecies(), name: petName() },
-    bubble,
+    bubble: currentBubble(),
     // Rounded: the mood drifts every poll, and the sidebar redraws (closing open menus) on every change.
     mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy) },
     reaction,
@@ -1364,11 +1209,13 @@ async function sidebarAction(a) {
   else if (a.type === "species") {
     if (!SPECIES.includes(a.species)) throw new Error(`unknown species ${a.species}`);
     writePet({ species: a.species });
-    await paint();
   } else if (a.type === "pet-name") {
     const name = clean(a.name ?? "").slice(0, 24);
     if (name) writePet({ name });
-    await paint();
+  } else if (a.type === "say") {
+    const sel = latestSnap?.workspaces.find((w) => w.selected);
+    if (!sel) throw new Error("no workspace to talk about");
+    if (await say(sel, String(a.mood ?? "smug"), String(a.text ?? ""))) lastSpokeAt = Date.now();
   } else if (a.type === "open-url") {
     // Port and pull request links: in cmux's browser or the default one, as cmux's settings say.
     const url = new URL(String(a.url));

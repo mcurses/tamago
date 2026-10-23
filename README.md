@@ -156,8 +156,9 @@ Everything Tama keeps is in `~/.local/state/tamago/`: the log, `pet.json`, `mood
   in …`. `Access denied - only processes started inside cmux` means the daemon was started outside
   a cmux terminal; open a new cmux terminal and it gets replaced. `you're away` means no keyboard
   or mouse input for 5 minutes. Talk set to Quiet or Muted explains a lot too.
-- **The sidebar says "Extension Blocked".** Click **Try Again**. It happens once after the sidebar
-  was updated.
+- **The sidebar says "Lost Connection" or "Extension Blocked".** Click **Try Again**. It happens
+  once after the sidebar was updated. **Use Default** switches to cmux's stock sidebar instead; to
+  get Tama back from there, right-click the sidebar toggle button and pick **Extension Sidebar**.
 - **The sidebar shows the egg named Tama and never a remark.** The daemon isn't running: open a
   new cmux terminal, or run `tamago restart`.
 - **`tamago: command not found`.** Add `~/.local/bin` to your `PATH`, or run
@@ -208,14 +209,8 @@ git clone https://github.com/mcurses/tamago.git ~/code/tamago
 `build-extension.sh` downloads cmux's extension SDK (GPL-3.0, not part of this repo) at the commit
 of cmux 0.64.22, compiles it with `swiftc`, and installs an ad-hoc signed
 `~/Applications/Tamago.app`. Run it again after pulling changes. `install.sh` from a checkout
-points the startup line and the `tamago` command at the checkout. A checkout never updates itself:
-`git pull`, then run both scripts again.
-
-Without the build, `install.sh` selects the script sidebar instead (`sidebar/tamago.swift`, which
-cmux interprets at runtime). It can't scroll the workspace list on its own, so the whole sidebar
-scrolls, and its footer is pinned with an explicit height: set `windowHeight()` at the top of the
-file to your cmux window's height in points (default 1084, a full-height window on a 14" MacBook
-Pro). It hot-reloads when you save. It has no Feed / Pet / Poke menu.
+builds the sidebar if it isn't built yet, and points the startup line and the `tamago` command at
+the checkout. A checkout never updates itself: `git pull`, then run both scripts again.
 
 ```sh
 node --test test/*.test.mjs                                    # tests
@@ -254,31 +249,19 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
   listens, since cmux keeps a stopped dev server's port around.
 - `daemon/settings.mjs` holds Tamago's own settings, `daemon/update.mjs` the release check and
   self-update.
-- `sidebar/tamago.swift` is the script sidebar. It can't read files or the network, so the daemon
-  puts one workspace progress label, `tamago|<epoch>|<mood>|<about>|<text>|<species>|<name>`, on
-  the workspace the remark is about, and the sidebar finds it. Its menu items set a workspace
-  description to a marker such as `tamago:rename` or `tamago:species:ghost`, which the daemon
-  picks up and undoes. `scripts/gen-species.mjs` bakes `sidebar/species.json` into it, because it
-  can't load data at runtime.
+- `sidebar/species.json` holds the sprites of all 19 species, which the build copies into the
+  extension and the daemon reads for the species list.
 
 ### cmux constraints found (0.64.22)
 
-- Custom sidebars have no files, network or timers. The writable channels that reach them are
-  `set-progress --label` and the workspace description; `set-status` doesn't.
-- The root view of an interpreted sidebar sits in a vertical scroll view that also covers the
-  title bar, so `Spacer`/`safeAreaInset` can't pin a footer; hence the explicit height knobs.
-  Compiled (ExtensionKit) sidebars get a fixed-height area below cmux's header strip instead,
-  with a fade over the bottom ~40pt.
-- `\n`, `\\` and `\"` in string literals are not unescaped, but raw strings (`#"…"#`) work.
-  `obj != nil` is unreliable; use interpolation (`"\(w.progress.label)"`) to tolerate missing
-  values.
-- A button action has to be a `cmux(...)` call itself. A helper `func` that calls `cmux` runs
-  nothing.
+- cmux's script sidebars (`~/.config/cmux/sidebars/*.swift`, interpreted at runtime) have no
+  files, network or timers, and their root view sits in a scroll view, so a footer scrolls away
+  with the list. Older Tamago versions shipped one; the compiled (ExtensionKit) sidebar replaced it.
+  It gets a fixed-height area below cmux's header strip, with a fade over the bottom ~40pt.
 - The cmux socket (default mode `cmuxOnly`) only admits processes started inside a cmux terminal.
   Detached children keep access. launchd jobs and `notifications.command` in cmux.json don't,
   hence the line in the shell's startup file. A daemon that loses access after a cmux restart
   stays up for the sidebar and Feed/Pet/Poke, and the next cmux shell replaces it.
-- `TextField`/`@State` only exist in cmux's newer `.js` sidebar engine.
 - Replacing a compiled extension's binary makes cmux 0.64 show "Extension Blocked" until Try
   Again is clicked.
 

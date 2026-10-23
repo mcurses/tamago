@@ -1,7 +1,7 @@
 import Foundation
 
 /// Tama's look for one animation tick: the egg, or one of the /buddy species from species.json.
-/// Same rules as the interpreted sidebar (sidebar/tamago.swift), plus mood and feed/pet/poke reactions.
+/// Sprites from sidebar/species.json, with mood and feed/pet/poke reactions.
 struct Pet {
     static let showSeconds = 1200.0 // how long a comment stays
     static let talkSeconds = 6.0 // how long Tama "talks" after a new comment
