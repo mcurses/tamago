@@ -28,8 +28,8 @@ in cmux:
    **Allow Requested Access**. It asks for the workspace list and names, and for selecting
    workspaces.
 
-Right-click Tama to feed, pet or poke it, pick one of 19 species, rename it, or change how much it
-talks.
+Right-click Tama to feed, pet or poke it, listen to what's on its mind, pick one of 19 species,
+rename it, or change how much it talks.
 
 Tama writes its remarks with `claude -p`, so they count against your Claude usage, a little (one
 short call per remark; how often depends on **Talk**, below). What it sends is described under
@@ -71,7 +71,7 @@ Right-click Tama:
 
 | Menu | Choices | Default |
 |---|---|---|
-| **Talk** | Chatty, Normal, Quiet, Muted. Chatty remarks about twice as often as Normal; Quiet about a third as often and never on idle stretches or workspace switches; Muted only answers Feed, Pet and Poke. | Normal |
+| **Talk** | Chatty, Normal, Quiet, Muted. Chatty remarks about twice as often as Normal; Quiet about a third as often and never on idle stretches or workspace switches; Muted only answers Feed, Pet, Poke and Listen. | Normal |
 | **Species**, **Rename** | 19 species; any name | Egg, "Tama" |
 | Settings → **Model** | Haiku (lightest on your usage), Sonnet, Opus (heaviest). Haiku is blander and slips into advice more. | Sonnet |
 | Settings → **Language** | English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Japanese, Korean, Chinese; any other with `tamago set` | English |
@@ -129,6 +129,7 @@ sidebar toggle button to pick another sidebar.
 tamago help
 tamago log                    # follow what Tama notices and says
 tamago mood                   # the mood, what shaped it, the character's tastes
+tamago listen                 # Tama says what's on its mind, in the bubble
 tamago version                # this version, and whether a newer one is out
 tamago restart
 tamago say "hello" happy      # push a remark by hand

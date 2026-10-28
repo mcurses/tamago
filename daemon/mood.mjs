@@ -287,11 +287,11 @@ export const caresAbout = (felt) => felt.some((f) => Math.abs(f.weight) >= 0.5);
 export const chattiness = (state, char) => char.chat * (0.4 + state.energy);
 
 /** The mood paragraph for the prompt. */
-export function describeMood(state, char, now = Date.now()) {
+export function describeMood(state, char, now = Date.now(), shown = 5) {
   const { name } = moodName(state);
   const word = (w) => (w >= 0.5 ? "loved" : w > 0 ? "liked" : w <= -0.5 ? "hated" : w < 0 ? "disliked" : "shrugged at");
   const mins = (at) => Math.max(1, Math.round((now - at) / 60000));
-  const causes = state.causes.slice(-5).map((c) => `${TAGS[c.tag] ?? c.tag}${c.about && c.about !== "you" ? ` in "${c.about}"` : ""} (${mins(c.at)} min ago, you ${word(c.weight)} it)`);
+  const causes = state.causes.slice(-shown).map((c) => `${TAGS[c.tag] ?? c.tag}${c.about && c.about !== "you" ? ` in "${c.about}"` : ""} (${mins(c.at)} min ago, you ${word(c.weight)} it)`);
   return [
     `Your mood right now: ${name} (valence ${state.valence.toFixed(2)} of -1..1, energy ${state.energy.toFixed(2)} of 0..1).`,
     spellText(state.spell),

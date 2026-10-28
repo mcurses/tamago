@@ -509,13 +509,14 @@ struct PetFooter: View {
     }
 
     @ViewBuilder private var menu: some View {
-        Button("Feed \(name)") { model.act("touch", ["kind": "feed"]) }
-        Button("Pet \(name)") { model.act("touch", ["kind": "pet"]) }
-        Button("Poke \(name)") { model.act("touch", ["kind": "poke"]) }
+        Button("Feed") { model.act("touch", ["kind": "feed"]) }
+        Button("Pet") { model.act("touch", ["kind": "pet"]) }
+        Button("Poke") { model.act("touch", ["kind": "poke"]) }
+        Button("Listen") { model.act("listen") }
         Divider()
         Menu("Talk") {
             let talk = settings?.talk ?? "normal"
-            ForEach([("chatty", "Chatty"), ("normal", "Normal"), ("quiet", "Quiet"), ("muted", "Muted (only answers Feed, Pet, Poke)")], id: \.0) { key, label in
+            ForEach([("chatty", "Chatty"), ("normal", "Normal"), ("quiet", "Quiet"), ("muted", "Muted (only answers when you ask)")], id: \.0) { key, label in
                 Button(checked(talk == key, label)) { model.act("tamago-setting", ["key": "talk", "value": key]) }
             }
         }

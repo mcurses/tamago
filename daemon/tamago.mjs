@@ -5,6 +5,7 @@
 //
 //   node daemon/tamago.mjs            run in the foreground
 //   node daemon/tamago.mjs --say "…"  have the running daemon say something (manual test)
+//   node daemon/tamago.mjs --listen   ask Tama what's on its mind (also: right-click Tama)
 //   node daemon/tamago.mjs --dry-run  log what would be said, don't touch cmux
 //   node daemon/tamago.mjs --peek [--diary] [--brain]  show Tama's context for the focused workspace
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
@@ -312,7 +313,7 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
-    describeMood(currentMood(), character()),
+    describeMood(currentMood(), character(), Date.now(), event.kind === "listen" ? 20 : 5),
     diary(),
     // The full date, or Haiku makes up the weekday ("best kind of Tuesday" on a Sunday).
     `Now: ${new Date(now).toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`,
@@ -370,6 +371,7 @@ const CANNED = {
   "touch-love": [["happy", "More of that, please."], ["happy", "Acceptable. Highly acceptable."]],
   "touch-meh": [["idle", "Noted."], ["smug", "If you must."]],
   "touch-hate": [["grumpy", "Hands off."], ["grumpy", "Rude."]],
+  listen: [["idle", "Hard to say. Ask me again in a bit."], ["smug", "Oh, a bit of this, a bit of that."]],
   back: [["happy", "Oh, you're back."], ["smug", "There you are. I kept an eye on things."]],
   idle: [["sleepy", "Still here. Still judging. Quietly."], ["sleepy", "Is it nap time? It feels like nap time."]],
 };
@@ -985,12 +987,16 @@ if (args[0] === "--set") {
   process.exit(0);
 }
 
-if (args[0] === "--say") {
+if (args[0] === "--say" || args[0] === "--listen") {
   // The bubble lives in the running daemon, so it says it.
   const res = await fetch(`http://127.0.0.1:${PORT}/action`, {
     method: "POST",
     headers: { "x-tamago-token": fs.readFileSync(TOKEN_FILE, "utf8").trim(), "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "say", text: args[1] ?? "Testing, testing. Is this thing on?", mood: args[2] ?? "smug" }),
+    body: JSON.stringify(
+      args[0] === "--listen"
+        ? { type: "listen" }
+        : { type: "say", text: args[1] ?? "Testing, testing. Is this thing on?", mood: args[2] ?? "smug" },
+    ),
   }).catch(() => null);
   if (!res?.ok) {
     console.error("the daemon isn't running; start it from a cmux terminal (scripts/ensure-running.sh)");
@@ -1191,6 +1197,31 @@ async function onTouch(kind) {
   })();
 }
 
+// Listen, from the sidebar menu: Tama says how it feels and why, from what actually moved its mood.
+async function onListen() {
+  if (busy) return;
+  const sel = latestSnap?.workspaces.find((w) => w.selected);
+  const event = {
+    kind: "listen",
+    detail: "The developer asked what's on your mind (Listen, from your sidebar menu). This is the one time you do respond to them: tell them how you feel and why, in character and in your current mood, from your mood and what shaped it below. Name the real things that moved you. If the feeling underneath has no reason, say that you don't know why, and don't blame the work for it. Don't claim anything happened that isn't stated here.",
+  };
+  log("listen →", moodName(currentMood()).name);
+  busy = true;
+  (async () => {
+    try {
+      const { mood: face, text, action } = (await brain(event)) ?? canned(event.kind); // they asked: always answer
+      if (await say({ id: sel?.id, title: "what's on my mind" }, face, text, action)) {
+        lastSpokeAt = Date.now();
+        remember({ at: Date.now(), kind: "listen", about: "you", mood: face, text, action });
+      }
+    } catch (err) {
+      log("listen reply failed:", err.message?.split("\n")[0]);
+    } finally {
+      busy = false;
+    }
+  })();
+}
+
 // Workspace actions the sidebar menus offer, mapped to `cmux workspace-action` names.
 const WORKSPACE_ACTIONS = new Set(["pin", "unpin", "mark-read", "mark-unread", "move-top", "move-up", "move-down", "close-others", "clear-color"]);
 
@@ -1234,6 +1265,8 @@ async function sidebarAction(a) {
     }
   } else if (a.type === "update") {
     await runUpdate();
+  } else if (a.type === "listen") {
+    await onListen();
   } else if (a.type === "touch") {
     if (!["feed", "pet", "poke"].includes(a.kind)) throw new Error(`unknown touch ${a.kind}`);
     await onTouch(a.kind);

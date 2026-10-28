@@ -107,6 +107,7 @@ case \${1-help} in
   set [key=value]    show or change settings: talk (chatty, normal, quiet, muted), model, language, …
   species [name]     show or pick the species        name [name]   show or change the name
   mood               the mood and what shaped it     log           follow what Tama notices and says
+  listen             Tama says what's on its mind    say \"…\"       make Tama say something
   version            this version, and whether a newer one is out
   update             install the newest release      restart       restart the daemon
   uninstall          remove Tamago; Tama's memory stays unless you add --forget" ;;
@@ -115,7 +116,7 @@ case \${1-help} in
     [[ -f ~/.local/state/tamago/tamago.pid ]] && kill \$(<~/.local/state/tamago/tamago.pid) 2>/dev/null && sleep 1
     exec "\$ROOT/scripts/ensure-running.sh" ;;
   uninstall) shift; exec "\$ROOT/scripts/uninstall.sh" "\$@" ;;
-  set|species|name|mood|version|update|say|peek) cmd=\$1; shift; exec "\$NODE" "\$ROOT/daemon/tamago.mjs" --\$cmd "\$@" ;;
+  set|species|name|mood|version|update|say|listen|peek) cmd=\$1; shift; exec "\$NODE" "\$ROOT/daemon/tamago.mjs" --\$cmd "\$@" ;;
   *) print -u2 "tamago: unknown command \$1 (try tamago help)"; exit 1 ;;
 esac
 EOF
