@@ -74,3 +74,26 @@ test("turn ends are counted only in bytes written since the last look", async ()
   fs.appendFileSync(file, JSON.stringify(end(4)) + "\n");
   assert.equal(turnEndsSince(file, mid.size).ends, 1);
 });
+
+test("endedOnError: only when the turn's last tool call failed", () => {
+  const failed = (text, t) => ({ type: "user", timestamp: at(t), message: { content: [{ type: "tool_result", is_error: true, content: text }] } });
+  const recovered = digest(write("recovered.jsonl", [
+    user("build it", 0), use("Bash", { command: "make" }, 1), failed("make: *** missing", 2),
+    use("Bash", { command: "make all" }, 3), result("ok", 4), end(5),
+  ]));
+  assert.equal(recovered.errors.length, 1);
+  assert.equal(recovered.endedOnError, false);
+  const stuck = digest(write("stuck.jsonl", [user("build it", 0), use("Bash", { command: "make" }, 1), failed("make: *** missing", 2), end(3)]));
+  assert.equal(stuck.endedOnError, true);
+});
+
+test("test results count only from a command that runs tests", () => {
+  const d = (command, out) => digest(write(`t-${Math.random()}.jsonl`, [user("check", 0), use("Bash", { command }, 1), result(out, 2), end(3)]));
+  const report = "FAIL  AC9/l2 both proof passes exited 0\n3 failed";
+  assert.equal(d("cat proofs/run.log", report).testFailed, false);
+  assert.equal(d("grep -r FAIL logs/", report).testFailed, false);
+  for (const cmd of ["npm test", "node --test test/*.test.mjs", "pytest -q", "cargo test", "npx vitest run", "python -m pytest", "go test ./...", "make check"]) {
+    assert.equal(d(cmd, "Tests: 2 failed, 5 passed").testFailed, true, cmd);
+  }
+  assert.equal(d("node --test test/*.test.mjs", "# pass 41\n# fail 0").testPassed, true);
+});

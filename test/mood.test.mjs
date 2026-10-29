@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHARACTERS, characterOf, initialMood, newSpell, stepMood, feel, touch, moodName, clockFactor, describeMood, describeTastes } from "../daemon/mood.mjs";
+import { CHARACTERS, characterOf, initialMood, newSpell, stepMood, feel, touch, turnTags, moodName, clockFactor, describeMood, describeTastes } from "../daemon/mood.mjs";
 import fs from "node:fs";
 
 const H = 3600_000;
@@ -48,7 +48,7 @@ test("left alone, nothing needs looking after", () => {
   assert.equal("fullness" in later, false);
 });
 
-test("loved things wear off when repeated, hated things add up", () => {
+test("repeats wear off, loved and hated alike", () => {
   const robot = CHARACTERS.robot;
   let s = { ...initialMood(robot, 0), valence: 0 };
   const gains = [];
@@ -65,7 +65,7 @@ test("loved things wear off when repeated, hated things add up", () => {
     s = feel(s, robot, ["slow"], "ws", i * 1000).state;
     losses.push(before - s.valence);
   }
-  assert.ok(losses[0] < losses[1] && losses[1] < losses[2], `losses ${losses}`);
+  assert.ok(losses[0] > losses[1] && losses[1] > losses[2], `losses ${losses}`);
 });
 
 test("feel ignores tags the character doesn't care about and reports what it felt", () => {
@@ -122,4 +122,21 @@ test("prompt text names the mood, its causes and the tastes", () => {
   assert.match(text, /passing tests in "rev1" \(5 min ago, you loved it\)/);
   assert.match(describeTastes(owl), /You enjoy working late at night/);
   assert.match(describeTastes(CHARACTERS.cat), /being petted: depends on your mood/);
+});
+
+test("a turn counts by how it ended", () => {
+  const base = { endedOnError: false, testFailed: false, testPassed: false, commits: 1, diffLines: 0, durationMs: 60_000 };
+  // Errors and a failing test on the way, fixed by the end: just the commit and the green run.
+  assert.deepEqual(turnTags({ ...base, errors: ["boom"], testFailed: true, testPassed: true }, { hour: 12 }), ["testPass", "commit"]);
+  assert.deepEqual(turnTags({ ...base, endedOnError: true, testFailed: true }, { hour: 12 }), ["error", "testFail", "commit"]);
+  // Late at night only while the developer is there.
+  assert.ok(turnTags(base, { hour: 2 }).includes("lateNight"));
+  assert.ok(!turnTags(base, { hour: 2, away: true }).includes("lateNight"));
+});
+
+test("a busy session of mixed turns doesn't pin an egg at furious", () => {
+  const egg = CHARACTERS.egg;
+  let s = { ...initialMood(egg, 0), valence: 0.3 };
+  for (let i = 0; i < 6; i++) s = feel(s, egg, ["error", "testFail", "commit"], "ws", i * 120_000).state;
+  assert.ok(s.valence > -0.5, `valence ${s.valence}`);
 });

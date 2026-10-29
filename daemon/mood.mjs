@@ -222,8 +222,28 @@ export function stepMood(state, char, now, { hour = new Date(now).getHours(), ra
 }
 
 /**
- * Let things that happened move the mood. Repeats within 10 minutes wear off when they are nice
- * and add up when they are annoying. Returns the new state and what was felt ({ tag, weight }).
+ * Tags for a finished turn, from its transcript digest (transcript.mjs). Only how the turn ended
+ * counts: an error the agent recovered from or a test it fixed later isn't bad news. Late night
+ * means the developer is up late, not an agent running on while they're away.
+ */
+export function turnTags(d, { hour = new Date().getHours(), away = false } = {}) {
+  return [
+    d.endedOnError && "error",
+    d.testFailed && !d.testPassed && "testFail",
+    d.testPassed && "testPass",
+    d.durationMs > 4 * 60_000 && "slow",
+    d.durationMs && d.durationMs < 20_000 && "fast",
+    d.diffLines > 150 && "bigDiff",
+    d.diffLines > 0 && d.diffLines <= 20 && "tidy",
+    d.commits && "commit",
+    hour < 5 && !away && "lateNight",
+  ].filter(Boolean);
+}
+
+/**
+ * Let things that happened move the mood. Repeats within 10 minutes wear off, nice or annoying
+ * alike, so a busy session moves the mood without pinning it at either end. Returns the new state
+ * and what was felt ({ tag, weight }).
  */
 export function feel(state, char, tags, about, now = Date.now()) {
   let { valence, energy } = state;
@@ -233,7 +253,7 @@ export function feel(state, char, tags, about, now = Date.now()) {
     const weight = char.likes[tag] ?? 0;
     if (!weight) continue;
     const repeats = causes.filter((c) => c.tag === tag && now - c.at < 10 * 60_000).length;
-    const scale = weight > 0 ? 1 / (1 + repeats) : 1 + 0.5 * repeats;
+    const scale = 1 / (1 + repeats);
     valence = clamp(valence + 0.3 * weight * scale, -1, 1);
     energy = clamp(energy + 0.08 * Math.abs(weight), 0, 1);
     causes.push({ at: now, tag, weight, about });

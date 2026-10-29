@@ -34,7 +34,7 @@ import { repeats } from "./repeats.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
-import { TAGS, characterOf, initialMood, stepMood, feel, touch, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
+import { TAGS, characterOf, initialMood, stepMood, feel, touch, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
 
@@ -174,22 +174,6 @@ function feelTags(tags, about) {
   currentMood(true);
   if (r.felt.length) log("felt", r.felt.map((f) => `${f.tag}${f.weight > 0 ? "+" : ""}${f.weight}`).join(" "), "→", moodName(mood).name);
   return r.felt;
-}
-
-/** Tags for a finished turn, from its transcript digest. */
-function turnTags(d) {
-  const hour = new Date().getHours();
-  return [
-    d.errors.length && "error",
-    d.testFailed && "testFail",
-    d.testPassed && "testPass",
-    d.durationMs > 4 * 60_000 && "slow",
-    d.durationMs && d.durationMs < 20_000 && "fast",
-    d.diffLines > 150 && "bigDiff",
-    d.diffLines > 0 && d.diffLines <= 20 && "tidy",
-    d.commits && "commit",
-    hour < 5 && "lateNight",
-  ].filter(Boolean);
 }
 
 /** The bubble, minus a remark by another species: a new species is a different Tama, whose
@@ -415,7 +399,7 @@ async function onTurnEnd(wsId) {
   const where = w.selected ? "" : " (background)";
   // What Tama reacts to depends on its character: a robot cares about slow turns, a penguin about
   // a messy diff. Strong feelings make a comment likelier; so does being chatty and awake.
-  const felt = d ? feelTags(turnTags(d), w.title) : [];
+  const felt = d ? feelTags(turnTags(d, { away: Boolean(awaySince) }), w.title) : [];
   const notable = caresAbout(felt);
   const chance = Math.min(0.95, (notable ? NOTABLE_CHANCE : CHANCE) * talk().chance * chattiness(mood, character()));
   if (Math.random() < chance) {

@@ -20,6 +20,9 @@ const TAIL_BYTES = 768 * 1024;
 const MAX_AGE_MS = 12 * 3600_000;
 const TEST_FAIL = /(\b[1-9]\d* (failed|failing)\b|^FAIL\b|\bTests?:.*\b[1-9]\d* failed\b|AssertionError|✗ |\bnot ok \d+)/m;
 const TEST_PASS = /(\b[1-9]\d* (passed|passing)\b|^# pass [1-9]|\bTests?:.*\b[1-9]\d* passed\b|^PASS\b|\bAll tests passed\b)/m;
+// Test output counts only from a command that runs tests: a log or report that merely contains
+// FAIL lines (a proof transcript, a grep, a cat) isn't a test run.
+const TEST_CMD = /\b(jest|vitest|pytest|mocha|rspec|phpunit|ctest|tox|nox)\b|\bnode\b[^\n|;&]*--test\b|\b(npm|npx|pnpm|yarn|bun|deno|cargo|go|swift|mix|dotnet|make|just|gradle|gradlew|mvn|rake|xcodebuild)\b[^\n|;&]*?\b(run\s+)?(test|tests|check)\b|\bpython3?\b[^\n|;&]*-m\s+(pytest|unittest)\b/;
 const COMMIT = /\bgit\b[^\n|;&]*\bcommit\b/;
 
 // Claude Code names project dirs after the cwd with every non-alphanumeric char replaced by "-".
@@ -160,9 +163,10 @@ function excerptOf(edit) {
 }
 
 /**
- * Digest of the latest turn: { prompt, earlierPrompts, said, tools, errors, testFailed, testPassed,
- * commits, diffLines, durationMs, ended, lastTurnEndAt, turnsToday, files, excerpt, commands,
- * failures }. testPassed means the last test run of the turn passed. `until` (ms) reads the
+ * Digest of the latest turn: { prompt, earlierPrompts, said, tools, errors, endedOnError, testFailed,
+ * testPassed, commits, diffLines, durationMs, ended, lastTurnEndAt, turnsToday, files, excerpt,
+ * commands, failures }. testPassed means the last test run of the turn passed; endedOnError that
+ * its last tool call failed (errors on the way that the agent recovered from don't count). `until` (ms) reads the
  * transcript as it was then, to replay an older turn.
  */
 export function digest(file, { until = Infinity } = {}) {
@@ -186,6 +190,7 @@ export function digest(file, { until = Infinity } = {}) {
   const turn = promptIdx >= 0 ? entries.slice(promptIdx + 1).filter((e) => !e.isSidechain) : [];
   const tools = {};
   const errors = [];
+  let endedOnError = false;
   let said = "";
   let testFailed = false;
   let testPassed = false;
@@ -197,6 +202,8 @@ export function digest(file, { until = Infinity } = {}) {
   const commands = [];
   const failures = [];
   let lastEdit = null;
+  const commandOf = new Map(); // tool_use id -> Bash command, to know what a result came from
+  let lastCommand = null;
   for (const e of turn) {
     if (e.type === "system" && e.subtype === "turn_duration") {
       ended = true;
@@ -206,6 +213,8 @@ export function digest(file, { until = Infinity } = {}) {
       if (e.type === "assistant" && b.type === "text" && b.text.trim()) said = b.text;
       if (b.type === "tool_use") {
         tools[b.name] = (tools[b.name] ?? 0) + 1;
+        lastCommand = b.name === "Bash" ? String(b.input?.command ?? "") : null;
+        if (b.id) commandOf.set(b.id, lastCommand);
         if (b.name === "Bash" && COMMIT.test(String(b.input?.command ?? ""))) commits++;
         diffLines += lineCount(b.input?.new_string) + lineCount(b.input?.old_string) + lineCount(b.input?.content);
         const f = b.input?.file_path ?? b.input?.notebook_path;
@@ -220,6 +229,9 @@ export function digest(file, { until = Infinity } = {}) {
       if (b.type === "tool_result") {
         const text = resultText(b);
         if (b.is_error && errors.length < 2) errors.push(text.trim().slice(0, 200));
+        endedOnError = Boolean(b.is_error);
+        const command = b.tool_use_id && commandOf.has(b.tool_use_id) ? commandOf.get(b.tool_use_id) : lastCommand;
+        if (!command || !TEST_CMD.test(command)) continue;
         if (TEST_FAIL.test(text)) {
           [testFailed, testPassed] = [true, false];
           for (const l of text.split("\n")) if (FAIL_LINE.test(l) && failures.length < 3) failures.push(l.trim().slice(0, 140));
@@ -234,6 +246,7 @@ export function digest(file, { until = Infinity } = {}) {
     said,
     tools,
     errors,
+    endedOnError,
     testFailed,
     testPassed,
     commits,

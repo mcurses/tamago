@@ -179,10 +179,11 @@ toward the character's baseline plus that underlying mood, so a quiet day isn't 
 
 Each species' character in `daemon/mood.mjs` sets a baseline the mood drifts back to over an hour
 or two, when it's awake, how talkative it is, what it likes and hates, and how it takes feed, pet
-and poke. Finished turns are tagged (tool errors, failing or passing tests, slow or quick turns,
-giant or tidy diffs, commits, late night) and the character feels the ones it cares about; so do
-hopping between sessions and long quiet stretches. Nice things wear off when repeated, annoying
-ones add up.
+and poke. Finished turns are tagged by how they ended (a failed last tool call, failing or passing
+tests, slow or quick turns, giant or tidy diffs, commits, you up late at night) and the character
+feels the ones it cares about; so do hopping between sessions and long quiet stretches. Errors the
+agent recovered from don't count. Anything repeated within 10 minutes wears off, nice or annoying,
+so a busy session sways the mood without pinning it.
 
 ## Development
 
