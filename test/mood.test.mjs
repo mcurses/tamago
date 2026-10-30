@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHARACTERS, characterOf, initialMood, newSpell, stepMood, feel, touch, turnTags, moodName, clockFactor, describeMood, describeTastes } from "../daemon/mood.mjs";
+import { CHARACTERS, characterOf, initialMood, newSpell, stepMood, feel, touch, savor, turnTags, moodName, clockFactor, describeMood, describeTastes } from "../daemon/mood.mjs";
 import fs from "node:fs";
 
 const H = 3600_000;
@@ -139,4 +139,11 @@ test("a busy session of mixed turns doesn't pin an egg at furious", () => {
   let s = { ...initialMood(egg, 0), valence: 0.3 };
   for (let i = 0; i < 6; i++) s = feel(s, egg, ["error", "testFail", "commit"], "ws", i * 120_000).state;
   assert.ok(s.valence > -0.5, `valence ${s.valence}`);
+});
+
+test("a special moment moves the mood and is named among the causes", () => {
+  const egg = CHARACTERS.egg;
+  const s = savor({ ...initialMood(egg, 0), valence: 0 }, 0.2, "you", 1000);
+  assert.equal(s.valence, 0.2);
+  assert.match(describeMood(s, egg, 61_000), /a moment that felt special \(1 min ago, you liked it\)/);
 });

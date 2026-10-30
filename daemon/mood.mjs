@@ -26,6 +26,7 @@ export const TAGS = {
   feed: "being fed",
   pet: "being petted",
   poke: "being poked",
+  special: "a moment that felt special",
 };
 
 // One character per species. likes: tag -> -1 (hates) … 1 (loves); |weight| >= 0.5 is something it
@@ -287,6 +288,19 @@ export function touch(state, char, kind, now = Date.now()) {
     },
     reaction,
     why,
+  };
+}
+
+/**
+ * A moment that stood out by what it was, not by its kind (the model judges that when it
+ * remarks): moves the mood by `weight` and is named among the causes.
+ */
+export function savor(state, weight, about, now = Date.now()) {
+  return {
+    ...state,
+    valence: clamp(state.valence + weight, -1, 1),
+    energy: clamp(state.energy + 0.05, 0, 1),
+    causes: [...state.causes, { at: now, tag: "special", weight, about }].slice(-20),
   };
 }
 

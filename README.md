@@ -198,6 +198,11 @@ Brain?](https://www.youtube.com/watch?v=PqtggjVAi8M):
   a routine one is faint. Novel moments (unlike anything Tama remembers), emotional ones (the mood
   moved) and the ones Tama paid attention to (it remarked on them) start out strong. The same thing
   again soon after strengthens the memory instead of adding another.
+- **Tama judges what was special.** Whenever it speaks, the model also rates the moment from 0
+  (routine) to 3 (one to remember for weeks) by what actually happened, not by the kind of event: a
+  commit that only deletes a failing test is no achievement, a funny exchange with you can be
+  special. From 2 on it writes down what to remember, and the moment lifts or sours its mood a
+  little. That rating, not the event's kind, sets how strongly a remark is remembered.
 - **Memories fade.** Without being brought back, most of a day's moments are gone within a day or
   two.
 - **Sleep consolidates.** When you've been away for 90 minutes, at most every 12 hours, Tama

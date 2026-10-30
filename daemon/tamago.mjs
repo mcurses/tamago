@@ -37,7 +37,7 @@ import { defaults as settingDefaults, parseSetting, talkProfile } from "./settin
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
 import { cuesOf, encode, recall, strongest, describeMemories, toReplay, consolidated, strengthNow } from "./memory.mjs";
-import { TAGS, characterOf, initialMood, stepMood, feel, touch, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
+import { TAGS, characterOf, initialMood, stepMood, feel, touch, savor, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
 
@@ -197,6 +197,23 @@ function memoriesFromDiary() {
   return items;
 }
 
+/**
+ * What Tama makes of a moment it spoke about. The model judged how special the moment was (0 … 3)
+ * and, from 2 on, wrote what to remember; that, rather than the kind of event, decides how strongly
+ * it's remembered. A special moment also moves the mood a little, the way Tama's face went.
+ */
+function takeIn({ special = 0, memory: gist = null, mood: face, text }, { about, cues = null, fallback = null }) {
+  const feeling = FACE_FEELING[face] ?? 0;
+  if (gist || fallback) {
+    memorize({ gist: `${gist ?? fallback}; I said: "${text}"`, about, cues: cues ?? cuesOf(about, gist ?? "", text), feeling, emotion: Math.max(0.15, special / 3), attended: true });
+  }
+  if (special >= 2) {
+    mood = savor(currentMood(), (feeling < 0 ? -0.1 : 0.1) * (special - 1), about);
+    currentMood(true);
+    log(`special (${special}):`, JSON.stringify(gist ?? text), "→", moodName(mood).name);
+  }
+}
+
 /** How a list of felt tags adds up: { feeling: -1..1, emotion: 0..1 }. */
 function feelingOf(felt) {
   const sum = felt.reduce((a, f) => a + f.weight, 0);
@@ -305,7 +322,13 @@ when it matters (very late, very early, a weekend). Silence between remarks is n
 mention it.
 Speak as yourself, in the first person; never refer to yourself by name.
 Write in ${tamagoSettings().language}. At most 130 characters: the speech bubble holds no more, so make one point. No quotes, no emoji, no hashtags.
-Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "..."}
+Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "...", "special": 0 to 3, "memory": "..." or null}
+"special" is how much this moment stands out to you: 0 routine, 1 a little interesting, 2 one you'll
+want to remember, 3 one you'll remember for weeks. Judge what actually happened, not the kind of
+event: a commit that only deletes a failing test is no achievement, a funny or warm exchange with
+the developer can be special. Most moments are 0 or 1.
+"memory": when special is 2 or 3, one sentence in the first person, past tense, about what happened
+and why it mattered to you, at most 25 words; otherwise null.
 "action" is a tiny stage direction of something you physically do, 2 to 6 words, third person,
 no asterisks, no name, no "you". Use your body: ${character().body}. Invent it fresh for this
 moment and mood, never a stock gesture and never one from your diary. Only include one when the
@@ -419,7 +442,9 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
       problem = `\nToo close to what you said before: "${echo}". Pick a different subject and a different sentence shape; don't reuse its words or images.`;
       continue;
     }
-    last = { mood: out.mood, text: sentencesThatFit(text), action };
+    const special = Math.max(0, Math.min(3, Math.round(Number(out.special) || 0)));
+    const memory = special >= 2 && out.memory ? clean(out.memory).slice(0, 200) : null;
+    last = { mood: out.mood, text: sentencesThatFit(text), action, special, memory };
     if (text.length <= BUBBLE_CHARS) return last;
     log(`too long (${text.length}):`, JSON.stringify(text));
     problem = `\nThat was ${text.length} characters: "${text}". The bubble holds ${BUBBLE_CHARS}. Say the same thing in fewer words.`;
@@ -841,7 +866,7 @@ async function tick() {
     if (await say(event.w, mood, text, action)) {
       lastSpokeAt = Date.now();
       remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text, action });
-      if (event.gist) memorize({ gist: `${event.gist}; I said: "${text}"`, about: event.w.title, cues: event.cues, feeling: currentMood().valence, emotion: 0.3, attended: true });
+      takeIn(said, { about: event.w.title, cues: event.cues, fallback: event.gist });
     }
   } catch (err) {
     log("tick failed:", err.message?.split("\n")[0]);
@@ -1283,11 +1308,12 @@ async function onTouch(kind) {
   busy = true;
   (async () => {
     try {
-      const { mood: face, text, action } = (await brain(event)) ?? canned(event.kind); // they touched it: always answer
+      const said = (await brain(event)) ?? canned(event.kind); // they touched it: always answer
+      const { mood: face, text, action } = said;
       if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });
-        memorize({ gist: `you ${verb.replace(" you", " me")} and I ${{ love: "loved", meh: "didn't care about", hate: "hated" }[r.reaction]} it; I said: "${text}"`, about: "you", cues: cuesOf(verb, "touch you"), feeling: { love: 0.6, meh: 0, hate: -0.6 }[r.reaction], emotion: 0.5, attended: true });
+        takeIn(said, { about: "you", fallback: `you ${verb.replace(" you", " me")} and I ${{ love: "loved", meh: "didn't care about", hate: "hated" }[r.reaction]} it` });
       }
     } catch (err) {
       log("touch reply failed:", err.message?.split("\n")[0]);
@@ -1309,10 +1335,12 @@ async function onListen() {
   busy = true;
   (async () => {
     try {
-      const { mood: face, text, action } = (await brain(event)) ?? canned(event.kind); // they asked: always answer
+      const said = (await brain(event)) ?? canned(event.kind); // they asked: always answer
+      const { mood: face, text, action } = said;
       if (await say({ id: sel?.id, title: "what's on my mind" }, face, text, action)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: "listen", about: "you", mood: face, text, action });
+        takeIn(said, { about: "you" });
       }
     } catch (err) {
       log("listen reply failed:", err.message?.split("\n")[0]);
