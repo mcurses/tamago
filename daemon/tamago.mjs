@@ -11,6 +11,8 @@
 //   node daemon/tamago.mjs --species [name]  show or pick the species (also: right-click Tama)
 //   node daemon/tamago.mjs --name [name]     show or set the pet's name (also: right-click Tama)
 //   node daemon/tamago.mjs --mood            show the mood and what shaped it
+//   node daemon/tamago.mjs --memories        what Tama remembers, strongest first
+//   TAMAGO_STATE_DIR=<copy> node daemon/tamago.mjs --sleep   consolidate the day's memories now (development)
 //   node daemon/tamago.mjs --compare [n]     replay the last n turn comments on Haiku and Sonnet
 //
 //   node daemon/tamago.mjs --set [key=value] show or change a setting (also: right-click Tama)
@@ -34,6 +36,7 @@ import { repeats } from "./repeats.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
+import { cuesOf, encode, recall, strongest, describeMemories, toReplay, consolidated, strengthNow } from "./memory.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
@@ -167,6 +170,80 @@ function currentMood(force = false) {
   return mood;
 }
 
+// ---------- long-term memory (see memory.mjs) ----------
+
+const MEMORY_FILE = path.join(STATE_DIR, "memories.json"); // { sleptAt, items: [memory] }
+let memory = readJson(MEMORY_FILE) ?? { sleptAt: 0, items: [] };
+let keepMemories = false; // only the running daemon changes them; --peek and --compare only look
+
+function saveMemory() {
+  if (keepMemories) fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory));
+}
+
+/** A moment Tama lived through; see encode() in memory.mjs. */
+function memorize(moment) {
+  memory.items = encode(memory.items, moment, Date.now());
+  saveMemory();
+}
+
+const FACE_FEELING = { happy: 0.5, smug: 0.2, idle: 0, sleepy: 0, shock: -0.2, grumpy: -0.5, sad: -0.6 };
+
+/** Before there were memories there was the diary: what Tama said lately becomes its first memories. */
+function memoriesFromDiary() {
+  let items = [];
+  for (const h of history.filter((h) => h.text && h.text !== "-")) {
+    items = encode(items, { gist: `${h.kind} in "${h.about}"; I said: "${h.text}"`, about: h.about, cues: cuesOf(h.about, h.kind, h.text), feeling: FACE_FEELING[h.mood] ?? 0, emotion: 0.3, attended: true }, h.at);
+  }
+  return items;
+}
+
+/** How a list of felt tags adds up: { feeling: -1..1, emotion: 0..1 }. */
+function feelingOf(felt) {
+  const sum = felt.reduce((a, f) => a + f.weight, 0);
+  return { feeling: Math.max(-1, Math.min(1, sum)), emotion: Math.min(1, felt.reduce((a, f) => a + Math.abs(f.weight), 0) * 0.6) };
+}
+
+/** What a turn is recognized by: the workspace, the prompt, the files, how it went. */
+const turnCues = (w, d, felt = []) => cuesOf(w.title, d?.prompt ?? "", (d?.files ?? []).join(" "), felt.map((f) => f.tag).join(" "));
+
+/** The gist of a finished turn, for memory. */
+function turnGist(w, d, felt) {
+  const what = felt.length ? felt.map((f) => TAGS[f.tag]).join(", ") : "a routine turn";
+  return `${what} in "${w.title}"${d?.prompt ? ` while working on "${short(d.prompt, 90)}"` : ""}`;
+}
+
+const SLEEP_AFTER_S = Number(process.env.TAMAGO_SLEEP_AFTER_S ?? 90 * 60); // away this long: Tama sleeps
+let sleeping = false;
+
+/**
+ * Sleep: replay the day's moments and keep a few gists of them for weeks. Once per long absence,
+ * at most every 12 hours; one model call.
+ */
+async function sleep() {
+  if (sleeping || Date.now() - memory.sleptAt < 12 * 3600_000) return;
+  sleeping = true;
+  const now = Date.now();
+  const { replay, dropped } = toReplay(memory.items, now);
+  let gists = null;
+  try {
+    if (replay.length) {
+      const list = replay.map((m, i) => `${i}. ${new Date(m.at).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" })}, strength ${strengthNow(m, now).toFixed(2)}, feeling ${m.feeling >= 0 ? "+" : ""}${m.feeling}: ${m.gist}`).join("\n");
+      const out = await ask(
+        `The moments of your day, in order:\n${list}\n\nMerge them into at most 6 memories worth keeping: the ones that mattered, related moments folded into one. Write each gist in the first person, past tense, at most 25 words, concrete (name the workspace and what happened). Reply with ONLY a JSON object: {"memories": [{"gist": "...", "about": "workspace title", "feeling": -1..1, "from": [moment numbers]}]}`,
+        tamagoSettings().model,
+        `You are ${petName()}, a small pet that watches a developer code. You are asleep, and your brain is replaying the day to decide what to remember. Write in ${tamagoSettings().language}.`,
+      );
+      gists = Array.isArray(out.memories) ? out.memories : null;
+    }
+  } catch (err) {
+    log("sleep replay failed, keeping the moments as they are:", err.message?.split("\n")[0]);
+  }
+  memory = { sleptAt: now, items: consolidated(memory.items, replay, gists, now) };
+  saveMemory();
+  log(`slept: ${replay.length} moments replayed${gists ? ` into ${gists.length} memories` : ""}, ${dropped} faded`);
+  sleeping = false;
+}
+
 /** Let tags (see TAGS in mood.mjs) move the mood; returns what was felt. */
 function feelTags(tags, about) {
   const r = feel(currentMood(), character(), tags, about);
@@ -294,9 +371,22 @@ const ACTION_CHANCE = Number(process.env.TAMAGO_ACTION_CHANCE ?? 0.3);
 /** What Tama says about an event, or null if it would only repeat itself. `now` replays an older moment. */
 async function brain(event, { model = tamagoSettings().model, now = Date.now() } = {}) {
   const act = event.kind === "back" || Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
+  // What this moment brings back. Replays of older moments (--compare) don't remember the future.
+  let remembered = [];
+  if (!replayAt && (event.cues || event.kind === "listen")) {
+    const opts = { valence: currentMood().valence };
+    const r = event.kind === "listen" ? strongest(memory.items, now, opts) : recall(memory.items, event.cues, now, opts);
+    if (r.recalled.length) {
+      memory.items = r.memories;
+      saveMemory();
+      remembered = r.recalled;
+      log("remembers:", remembered.map((m) => JSON.stringify(short(m.gist, 60))).join(" / "));
+    }
+  }
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
+    describeMemories(remembered, now),
     describeMood(currentMood(), character(), Date.now(), event.kind === "listen" ? 20 : 5),
     diary(),
     // The full date, or Haiku makes up the weekday ("best kind of Tuesday" on a Sunday).
@@ -337,14 +427,14 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
   return last;
 }
 
-async function ask(prompt, model) {
+async function ask(prompt, model, system = null) {
   const { stdout } = await run(CLAUDE, [
     "-p", "--model", model, "--no-session-persistence", "--strict-mcp-config",
     "--settings", JSON.stringify({ disableAllHooks: true }), "--tools", "",
-    "--system-prompt", persona(), prompt,
+    "--system-prompt", system ?? persona(), prompt,
   ], { timeout: 45_000, cwd: STATE_DIR });
   const out = JSON.parse(stdout.slice(stdout.indexOf("{"), stdout.lastIndexOf("}") + 1));
-  if (!out.text) throw new Error("empty text");
+  if (!system && !out.text) throw new Error("empty text");
   return out;
 }
 
@@ -401,6 +491,7 @@ async function onTurnEnd(wsId) {
   // a messy diff. Strong feelings make a comment likelier; so does being chatty and awake.
   const felt = d ? feelTags(turnTags(d, { away: Boolean(awaySince) }), w.title) : [];
   const notable = caresAbout(felt);
+  memorize({ gist: turnGist(w, d, felt), about: w.title, cues: turnCues(w, d, felt), ...feelingOf(felt) });
   const chance = Math.min(0.95, (notable ? NOTABLE_CHANCE : CHANCE) * talk().chance * chattiness(mood, character()));
   if (Math.random() < chance) {
     const delay = DELAY_MIN_S + Math.random() * (DELAY_MAX_S - DELAY_MIN_S);
@@ -471,6 +562,8 @@ async function checkPresence() {
     awaySince = Date.now() - idleNow * 1000;
     awayTurns = [];
     log(`you're away (no input for ${Math.round(idleNow / 60)} min)`);
+  } else if (awaySince && idleNow > SLEEP_AFTER_S && keepMemories) {
+    sleep().catch((err) => log("sleep failed:", err.message));
   } else if (awaySince && idleNow < 60) {
     const awayMs = Date.now() - idleNow * 1000 - awaySince;
     log(`you're back after ${Math.round(awayMs / 60000)} min, ${awayTurns.length} turns ended meanwhile`);
@@ -642,7 +735,7 @@ function detect(snap) {
       const w = snap.workspaces.find((x) => x.id === c.wsId);
       const d = w && transcriptOf(w);
       if (d) {
-        events.push({ kind: "turn", priority: c.notable ? 3 : 2, w, detail: turnDetail(w, d, sel, c.felt) });
+        events.push({ kind: "turn", priority: c.notable ? 3 : 2, w, detail: turnDetail(w, d, sel, c.felt), cues: turnCues(w, d, c.felt), gist: turnGist(w, d, c.felt) });
         break;
       }
     }
@@ -664,7 +757,7 @@ function detect(snap) {
   if (sel && !switchAnnounced && now - selectedSince > SWITCH_DWELL_S * 1000) {
     switchAnnounced = true;
     if (Math.random() < SWITCH_CHANCE * talk().switch) {
-      events.push({ kind: "switch", priority: 1, w: sel, detail: `${describe(sel)}\nThe developer just switched to this workspace and stayed.` + (sel.latest_submitted_message ? `\nLast prompt there: "${short(sel.latest_submitted_message, 150)}"` : "") });
+      events.push({ kind: "switch", priority: 1, w: sel, cues: cuesOf(sel.title, sel.latest_submitted_message ?? ""), detail: `${describe(sel)}\nThe developer just switched to this workspace and stayed.` + (sel.latest_submitted_message ? `\nLast prompt there: "${short(sel.latest_submitted_message, 150)}"` : "") });
     }
   }
   // A quiet stretch gets at most one remark, and usually none: with nothing new to look at, Tama
@@ -748,6 +841,7 @@ async function tick() {
     if (await say(event.w, mood, text, action)) {
       lastSpokeAt = Date.now();
       remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text, action });
+      if (event.gist) memorize({ gist: `${event.gist}; I said: "${text}"`, about: event.w.title, cues: event.cues, feeling: currentMood().valence, emotion: 0.3, attended: true });
     }
   } catch (err) {
     log("tick failed:", err.message?.split("\n")[0]);
@@ -930,6 +1024,26 @@ if (args[0] === "--mood") {
   if (m.spell) console.log(`Underlying mood: valence ${m.spell.valence >= 0 ? "+" : ""}${m.spell.valence.toFixed(2)}, energy ${m.spell.energy >= 0 ? "+" : ""}${m.spell.energy.toFixed(2)}, until ${new Date(m.spell.until).toLocaleString("en-GB")}`);
   console.log(describeMood(m, character()));
   console.log(describeTastes(character()));
+  process.exit(0);
+}
+
+if (args[0] === "--memories") {
+  const now = Date.now();
+  const items = [...memory.items].sort((a, b) => strengthNow(b, now) - strengthNow(a, now));
+  if (!items.length) console.log(`${petName()} doesn't remember anything yet.`);
+  for (const m of items) {
+    console.log(`${strengthNow(m, now).toFixed(2)} ${m.slept ? "long-term" : "today    "} ${new Date(m.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}  ${m.feeling >= 0 ? "+" : ""}${m.feeling.toFixed(1)}  ${m.gist}${m.recalls ? `  (recalled ${m.recalls}×)` : ""}`);
+  }
+  if (memory.sleptAt) console.log(`last slept ${new Date(memory.sleptAt).toLocaleString("en-GB")}`);
+  process.exit(0);
+}
+
+if (args[0] === "--sleep") {
+  // Development: sleep now, on a copy of the state (TAMAGO_STATE_DIR), not under a running daemon.
+  keepMemories = true;
+  if (!fs.existsSync(MEMORY_FILE)) memory = { sleptAt: 0, items: memoriesFromDiary() };
+  memory.sleptAt = 0;
+  await sleep();
   process.exit(0);
 }
 
@@ -1163,6 +1277,7 @@ async function onTouch(kind) {
   const count = before === 0 ? `This is the first time today.` : `They did that ${before} time${before > 1 ? "s" : ""} earlier today.`;
   const event = {
     kind: `touch-${r.reaction}`,
+    cues: cuesOf(verb, "touch you"),
     detail: `The developer just ${verb} (from your sidebar menu). ${count} ${feeling}${r.why ? `: ${r.why}` : ""}. React to that directly, in character; this is the one time you do respond to them. Don't claim anything happened that isn't stated here.`,
   };
   busy = true;
@@ -1172,6 +1287,7 @@ async function onTouch(kind) {
       if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });
+        memorize({ gist: `you ${verb.replace(" you", " me")} and I ${{ love: "loved", meh: "didn't care about", hate: "hated" }[r.reaction]} it; I said: "${text}"`, about: "you", cues: cuesOf(verb, "touch you"), feeling: { love: 0.6, meh: 0, hate: -0.6 }[r.reaction], emotion: 0.5, attended: true });
       }
     } catch (err) {
       log("touch reply failed:", err.message?.split("\n")[0]);
@@ -1267,6 +1383,12 @@ if (!DRY) {
   setInterval(() => sweepDetails().catch(() => {}), 60_000);
   setInterval(() => readListening().catch((err) => log("reading ports failed:", err.message)), 10_000);
   setInterval(() => countClaudeSessions().catch((err) => log("counting Claude sessions failed:", err.message)), 10_000);
+  keepMemories = true;
+  if (!fs.existsSync(MEMORY_FILE)) {
+    memory = { sleptAt: 0, items: memoriesFromDiary() };
+    saveMemory();
+    log(`remembered ${memory.items.length} moments from the diary`);
+  }
   startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
   // Hourly, but checkForUpdate asks GitHub at most once a day.
   let told = null;

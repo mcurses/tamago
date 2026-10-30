@@ -49,7 +49,8 @@ short call per remark; how often depends on **Talk**, below). What it sends is d
   30 minutes or more, it tells you what the sessions did meanwhile.
 - **Remembers.** Tama keeps a diary of what it said, so it follows up on itself instead of
   repeating jokes. The diary belongs to the species: after a switch, the new one knows what
-  happened but not what the old one said, as if it had always been this species.
+  happened but not what the old one said, as if it had always been this species. Beyond the diary
+  it has a long-term memory that works a bit like yours: see [Memory](#memory).
 - **19 looks and characters.** The egg, plus the 18 original `/buddy` species: duck, goose, blob,
   cat, dragon, octopus, owl, penguin, turtle, snail, ghost, axolotl, capybara, cactus, robot,
   rabbit, mushroom and chonk. Each is animated, has its own personality, likes and dislikes (the
@@ -116,7 +117,8 @@ sidebar toggle button to pick another sidebar.
 
 - **To Anthropic, through your Claude Code login:** for each remark, a prompt with the digest
   described above: your last prompt, excerpts of the agent's answer, file names, a few lines of
-  the last edit, command lines and error lines, workspace titles, and Tama's diary. Edits to files
+  the last edit, command lines and error lines, workspace titles, Tama's diary and the memories
+  the moment brings back. Once a night, the day's memories, to consolidate them. Edits to files
   that look private (`.env`, keys, anything named secret, token, password or credential) are never
   quoted. Tama's calls run with hooks and tools off.
 - **To GitHub:** one request a day for the latest release, while the update check is on.
@@ -129,6 +131,7 @@ sidebar toggle button to pick another sidebar.
 tamago help
 tamago log                    # follow what Tama notices and says
 tamago mood                   # the mood, what shaped it, the character's tastes
+tamago memories               # what Tama remembers, strongest first
 tamago listen                 # Tama says what's on its mind, in the bubble
 tamago version                # this version, and whether a newer one is out
 tamago restart
@@ -136,7 +139,7 @@ tamago say "hello" happy      # push a remark by hand
 ```
 
 Everything Tama keeps is in `~/.local/state/tamago/`: the log, `pet.json`, `mood.json`,
-`settings.json`, the diary (`history.jsonl`) and the token.
+`settings.json`, the diary (`history.jsonl`), the memories (`memories.json`) and the token.
 
 ## Troubleshooting
 
@@ -184,6 +187,29 @@ tests, slow or quick turns, giant or tidy diffs, commits, you up late at night) 
 feels the ones it cares about; so do hopping between sessions and long quiet stretches. Errors the
 agent recovered from don't count. Anything repeated within 10 minutes wears off, nice or annoying,
 so a busy session sways the mood without pinning it.
+
+## Memory
+
+Tama's long-term memory (`daemon/memory.mjs`) is modeled loosely on how brains store memories, as
+Kurzgesagt explains it in [How Are Memories Stored Inside Your
+Brain?](https://www.youtube.com/watch?v=PqtggjVAi8M):
+
+- **Most moments leave a weak trace.** Every finished turn, touch and remark becomes a memory, but
+  a routine one is faint. Novel moments (unlike anything Tama remembers), emotional ones (the mood
+  moved) and the ones Tama paid attention to (it remarked on them) start out strong. The same thing
+  again soon after strengthens the memory instead of adding another.
+- **Memories fade.** Without being brought back, most of a day's moments are gone within a day or
+  two.
+- **Sleep consolidates.** When you've been away for 90 minutes, at most every 12 hours, Tama
+  sleeps: it replays the day, lets the faint moments go and folds the rest into a few gists that
+  last weeks. That's one model call.
+- **Cues bring memories back.** A turn in the same workspace, about the same thing, brings back
+  what Tama remembers of it, so it can make a callback days later. Listen brings back the strongest
+  ones.
+- **Remembering changes the memory.** Each recall strengthens it and colors it with the mood Tama
+  is in now, so memories drift over time. Vivid isn't the same as accurate, for pets too.
+
+`tamago memories` lists them with their strength.
 
 ## Development
 
