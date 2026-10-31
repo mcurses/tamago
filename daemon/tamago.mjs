@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 import { transcriptFor, transcriptForSession, transcriptsIn, turnEndsSince, digest } from "./transcript.mjs";
 import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
+import { firstJson } from "./json.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
@@ -222,7 +223,7 @@ function takeIn({ special = 0, memory: gist = null, mood: face, text }, { about,
 // memory that lasts, as a little joy, and as an example in every prompt of what works.
 const SHOW_MS = 1200_000; // Pet.showSeconds in the sidebar
 const LIKE_GRACE_MS = 2000; // a fresh +1 keeps the bubble up at least this long, to take it back
-const LIKED_FILE = path.join(STATE_DIR, "liked.jsonl"); // { at, likedAt, about, text, action, why, lesson, special, note, species, situation }
+const LIKED_FILE = path.join(STATE_DIR, "liked.jsonl"); // { at, likedAt, about, text, action, why, special, note, species, situation }
 const LOVED_SHOWN = 6;
 const liked = readLiked();
 
@@ -252,7 +253,6 @@ that in new ways; never reuse their words or jokes:\n${shown.map((l) => `- ${l.a
 async function savorLike(r) {
   const likedAt = r.likedAt ?? Date.now();
   let why = null;
-  let lesson = null;
   try {
     const out = await ask(
       [
@@ -260,17 +260,16 @@ async function savorLike(r) {
         `\nYou said, about "${r.about}": ${r.action ? `*${r.action}* ` : ""}"${r.text}"`,
         r.note ? `The developer told you how they read it: ${r.note}` : "",
         "\nThe developer gave this remark a +1: they loved it. Work out what made it land, every layer of it: the timing, what it was useful for, who or what it teased, the wordplay, the stage direction. Name the concrete things.",
-        'Reply with ONLY a JSON object: {"why": "2 to 4 sentences, first person, past tense", "lesson": "one short sentence: what to do more of"}',
+        'Reply with ONLY a JSON object: {"why": "2 to 4 sentences, first person, past tense"}',
       ].filter(Boolean).join("\n"),
       tamagoSettings().model,
       `You are ${petName()}, a small pet that watches a developer code and now and then makes a remark. Write in English.`,
     );
-    why = out.why ? String(out.why).replace(/\s+/g, " ").trim().slice(0, 600) : null;
-    lesson = out.lesson ? String(out.lesson).replace(/\s+/g, " ").trim().slice(0, 200) : null;
+    why = out.why ? wholeSentences(String(out.why).replace(/\s+/g, " ").trim(), 900) : null;
   } catch (err) {
     log("+1 analysis failed, keeping the remark without it:", err.message?.split("\n")[0]);
   }
-  const entry = { at: r.at, likedAt, about: r.about, text: r.text, action: r.action ?? null, why: why ?? "(not worked out)", lesson, special: r.special ?? null, note: r.note ?? null, species: chosenSpecies(), situation: r.situation ?? null };
+  const entry = { at: r.at, likedAt, about: r.about, text: r.text, action: r.action ?? null, why: why ?? "(not worked out)", special: r.special ?? null, note: r.note ?? null, species: chosenSpecies(), situation: r.situation ?? null };
   liked.push(entry);
   if (!DRY) fs.appendFileSync(LIKED_FILE, JSON.stringify(entry) + "\n");
   if (keepMemories) {
@@ -285,6 +284,14 @@ async function savorLike(r) {
   mood = savor(currentMood(), 0.12, r.about, Date.now(), "liked");
   currentMood(true);
   log(`+1 (I had rated it special ${r.special ?? "?"}):`, JSON.stringify(r.text), "→", JSON.stringify(why), "→", moodName(mood).name);
+}
+
+/** At most `max` characters, cut after a whole sentence. */
+function wholeSentences(text, max) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  return end > 0 ? cut.slice(0, end + 1) : cut;
 }
 
 /** The bubble's +1 counts once the bubble is gone: shown long enough, or replaced by a new remark. */
@@ -553,7 +560,7 @@ async function ask(prompt, model, system = null) {
     "--settings", JSON.stringify({ disableAllHooks: true }), "--tools", "",
     "--system-prompt", system ?? persona(), prompt,
   ], { timeout: 45_000, cwd: STATE_DIR });
-  const out = JSON.parse(stdout.slice(stdout.indexOf("{"), stdout.lastIndexOf("}") + 1));
+  const out = firstJson(stdout);
   if (!system && !out.text) throw new Error("empty text");
   return out;
 }
@@ -1088,7 +1095,10 @@ if (args[0] === "--peek") {
   const event = { kind: "turn", w: sel, detail: d ? turnDetail(sel, d) : describe(sel) };
   console.log(event.detail);
   if (args.includes("--diary")) console.log("\n" + diary());
-  if (args.includes("--brain")) console.log("\n→", JSON.stringify(await brain(event)));
+  if (args.includes("--brain")) {
+    const { prompt, ...said } = (await brain(event)) ?? {}; // the prompt is printed above
+    console.log("\n→", JSON.stringify(said));
+  }
   process.exit(0);
 }
 
