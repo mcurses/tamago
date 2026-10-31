@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cuesOf, similarity, strengthNow, forget, encode, recall, strongest, describeMemories, toReplay, consolidated } from "../daemon/memory.mjs";
+import { cuesOf, similarity, strengthNow, forget, encode, cherish, recall, strongest, describeMemories, toReplay, consolidated } from "../daemon/memory.mjs";
 
 const H = 3600_000;
 const D = 24 * H;
@@ -84,4 +84,18 @@ test("sleep drops weak moments and keeps the day as a few long-term gists", () =
   const fallback = consolidated(mem, replay, null, 3 * H);
   assert.equal(fallback.length, 2);
   assert.ok(fallback.every((m) => m.slept));
+});
+
+test("a remark the developer loved is kept whole, strong, and out of the sleep replay", () => {
+  let mem = encode([], moment("tests failed in billing invoices export"), 0);
+  const gist = 'The developer loved it when I said: "Everything in rev1 waits on someone busy having fun." It teased them and was a useful nudge.';
+  mem = cherish(mem, { at: 0, gist, about: "rev1", cues: cuesOf("rev1 waits fun nudge") }, 0);
+  const loved = mem.find((m) => m.liked);
+  assert.equal(loved.gist, gist);
+  assert.equal(loved.strength, 1);
+  assert.ok(strengthNow(loved, 14 * D) > 0.3, "still there two weeks later");
+  const { replay } = toReplay(mem, H);
+  assert.ok(!replay.includes(loved));
+  const after = consolidated(mem, replay, [{ gist: "Billing broke.", from: [0] }], H);
+  assert.equal(after.find((m) => m.liked)?.gist, gist);
 });

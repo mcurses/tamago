@@ -15,7 +15,7 @@
 //   (reconsolidation), so memories drift: vivid isn't the same as accurate.
 //
 // A memory: { at, gist, about, cues: [word], feeling: -1..1, strength: 0..1 at `seen`, seen,
-// recalls, slept }. Pure functions; the daemon keeps them in memories.json.
+// recalls, slept, liked? }. Pure functions; the daemon keeps them in memories.json.
 
 const DAY = 24 * 3600_000;
 const FADE_DAYS = 1; // a moment's strength halves in about 0.7 days
@@ -73,6 +73,14 @@ export function encode(memories, { gist, about = "", cues, feeling = 0, emotion 
   const novelty = 1 - Math.max(0, ...fresh.map((m) => similarity(cues, m.cues)));
   const strength = Math.min(1, 0.1 + 0.4 * Math.min(1, emotion) + 0.25 * novelty + (attended ? 0.2 : 0));
   return [...fresh, { at: now, gist, about, cues, feeling: round2(feeling), strength: round2(strength), seen: now, recalls: 0, slept: false }];
+}
+
+/**
+ * A moment the developer singled out (a +1 on a remark): kept as told, as strong as memories get,
+ * and never merged away in sleep, so it lasts weeks with all its context.
+ */
+export function cherish(memories, { at, gist, about = "", cues, feeling = 0.8 }, now) {
+  return forget([...memories, { at, gist, about, cues, feeling: round2(feeling), strength: 1, seen: now, recalls: 0, slept: true, liked: true }], now);
 }
 
 /**

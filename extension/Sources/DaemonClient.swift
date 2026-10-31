@@ -13,6 +13,8 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var about: String
         var text: String
         var action: String? // a stage direction like "bristles its spines", now and then
+        var liked: Bool? // the developer's +1, until the bubble is gone
+        var likedAt: Double? // epoch milliseconds of the last +1 click, given or taken back
     }
 
     /// Per-workspace details the stock sidebar shows (daemon/details.mjs). Optional, so an older
@@ -69,6 +71,7 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var model: String?
         var language: String?
         var checkUpdates: Bool?
+        var swearing: Bool?
     }
 
     /// The daemon's version and a newer release, if its update check found one.

@@ -36,7 +36,7 @@ import { repeats } from "./repeats.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
-import { cuesOf, encode, recall, strongest, describeMemories, toReplay, consolidated, strengthNow } from "./memory.mjs";
+import { cuesOf, encode, cherish, recall, strongest, describeMemories, toReplay, consolidated, strengthNow } from "./memory.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, savor, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
@@ -214,6 +214,90 @@ function takeIn({ special = 0, memory: gist = null, mood: face, text }, { about,
   }
 }
 
+// ---------- +1 ----------
+
+// The developer can +1 a remark from the bubble. It counts once the bubble is gone (the sidebar
+// shows a remark for SHOW_MS), so a click taken back in time leaves no trace. Then Tama asks
+// itself, with the situation it was in, what made the remark land, and keeps all of it: as a
+// memory that lasts, as a little joy, and as an example in every prompt of what works.
+const SHOW_MS = 1200_000; // Pet.showSeconds in the sidebar
+const LIKE_GRACE_MS = 2000; // a fresh +1 keeps the bubble up at least this long, to take it back
+const LIKED_FILE = path.join(STATE_DIR, "liked.jsonl"); // { at, likedAt, about, text, action, why, lesson, special, note, species, situation }
+const LOVED_SHOWN = 6;
+const liked = readLiked();
+
+function readLiked() {
+  try {
+    return fs.readFileSync(LIKED_FILE, "utf8").trim().split("\n").flatMap((l) => {
+      try {
+        return [JSON.parse(l)];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** The persona's examples: the latest remarks the developer loved and why they landed. */
+function lovedRemarks() {
+  const shown = liked.filter((l) => l.species === chosenSpecies()).slice(-LOVED_SHOWN);
+  if (!shown.length) return "";
+  return `\nRemarks the developer loved (+1), and why they landed. Learn what made them work, then do
+that in new ways; never reuse their words or jokes:\n${shown.map((l) => `- ${l.action ? `*${l.action}* ` : ""}"${l.text}": ${l.why}`).join("\n")}`;
+}
+
+/** A +1 that counts: work out why the remark landed, then remember it, enjoy it and learn from it. */
+async function savorLike(r) {
+  const likedAt = r.likedAt ?? Date.now();
+  let why = null;
+  let lesson = null;
+  try {
+    const out = await ask(
+      [
+        r.situation ? `The situation you were in, as you were shown it:\n${r.situation}` : "The situation wasn't kept; go by the remark itself.",
+        `\nYou said, about "${r.about}": ${r.action ? `*${r.action}* ` : ""}"${r.text}"`,
+        r.note ? `The developer told you how they read it: ${r.note}` : "",
+        "\nThe developer gave this remark a +1: they loved it. Work out what made it land, every layer of it: the timing, what it was useful for, who or what it teased, the wordplay, the stage direction. Name the concrete things.",
+        'Reply with ONLY a JSON object: {"why": "2 to 4 sentences, first person, past tense", "lesson": "one short sentence: what to do more of"}',
+      ].filter(Boolean).join("\n"),
+      tamagoSettings().model,
+      `You are ${petName()}, a small pet that watches a developer code and now and then makes a remark. Write in English.`,
+    );
+    why = out.why ? String(out.why).replace(/\s+/g, " ").trim().slice(0, 600) : null;
+    lesson = out.lesson ? String(out.lesson).replace(/\s+/g, " ").trim().slice(0, 200) : null;
+  } catch (err) {
+    log("+1 analysis failed, keeping the remark without it:", err.message?.split("\n")[0]);
+  }
+  const entry = { at: r.at, likedAt, about: r.about, text: r.text, action: r.action ?? null, why: why ?? "(not worked out)", lesson, special: r.special ?? null, note: r.note ?? null, species: chosenSpecies(), situation: r.situation ?? null };
+  liked.push(entry);
+  if (!DRY) fs.appendFileSync(LIKED_FILE, JSON.stringify(entry) + "\n");
+  if (keepMemories) {
+    memory.items = cherish(memory.items, {
+      at: r.at,
+      gist: `The developer loved it when I said: ${r.action ? `*${r.action}* ` : ""}"${r.text}"${why ? ` ${why}` : ""}`,
+      about: r.about,
+      cues: cuesOf(r.about, r.text, why ?? "", r.note ?? ""),
+    }, Date.now());
+    saveMemory();
+  }
+  mood = savor(currentMood(), 0.12, r.about, Date.now(), "liked");
+  currentMood(true);
+  log(`+1 (I had rated it special ${r.special ?? "?"}):`, JSON.stringify(r.text), "→", JSON.stringify(why), "→", moodName(mood).name);
+}
+
+/** The bubble's +1 counts once the bubble is gone: shown long enough, or replaced by a new remark. */
+function likeIfGone(replaced = false) {
+  const b = bubble;
+  if (!b.liked || b.likeDone) return;
+  const now = Date.now();
+  if (!replaced && !(now - b.at > SHOW_MS && now - (b.likedAt ?? 0) > LIKE_GRACE_MS)) return;
+  bubble = { ...b, likeDone: true };
+  if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
+  savorLike(b).catch((err) => log("+1 failed:", err.message));
+}
+
 /** How a list of felt tags adds up: { feeling: -1..1, emotion: 0..1 }. */
 function feelingOf(felt) {
   const sum = felt.reduce((a, f) => a + f.weight, 0);
@@ -280,7 +364,13 @@ function currentBubble() {
   return bubble;
 }
 
-async function say(about, mood, text, action = null) {
+/** Shows a remark. `said` is what brain() returned, if it made the remark: the situation and how
+ * special it rated it, kept for a +1. */
+async function say(about, mood, text, action = null, said = null) {
+  // A +1 just given keeps its bubble up long enough to be taken back.
+  const wait = LIKE_GRACE_MS - (Date.now() - (bubble.likedAt ?? 0));
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  likeIfGone(true);
   bubble = {
     at: Date.now(),
     mood: MOODS.includes(mood) ? mood : "idle",
@@ -288,6 +378,8 @@ async function say(about, mood, text, action = null) {
     text: sentencesThatFit(text) || "-",
     action: action ? clean(action).replace(/^\*+|\*+$/g, "").slice(0, 40) || null : null,
     species: chosenSpecies(),
+    situation: said?.prompt ?? null,
+    special: said?.special ?? null,
   };
   if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
   log(DRY ? "say (dry-run)" : "say", about.title, bubble.action ? `*${bubble.action}*` : "", JSON.stringify(bubble.text));
@@ -313,14 +405,17 @@ the thing) and have a small twist: a pattern, an irony, a claim that doesn't qui
 smell, a step that got skipped, something done well. Be specific to this turn; a remark that would
 fit any turn is a bad remark.
 Your character: ${character().voice}. ${describeTastes(character())}
-Stay in character and never mean. You are a pet, not an assistant: an observation, never
+Stay in character. Teasing the developer is welcome, the way a cheeky friend does it (everything
+waits on them while they're off having fun somewhere); never cruel. ${tamagoSettings().swearing ? `You swear freely and like crude
+humor: words nobody expects from something that looks this innocent. Use them where they land,
+not in every line. ` : ""}You are a pet, not an assistant: an observation, never
 instructions, no "you should", no questions that demand an answer. If nothing in the work is worth
 remarking on, react to how the turn went instead, in character.
 Your diary is in the prompt. Never repeat a line, a joke, an image or an opening phrase from it; a
 callback is fine when it fits. Vary sentence shape and length. Don't tell the time; mention it only
 when it matters (very late, very early, a weekend). Silence between remarks is normal; don't
 mention it.
-Speak as yourself, in the first person; never refer to yourself by name.
+Speak as yourself, in the first person; never refer to yourself by name.${lovedRemarks()}
 Write in ${tamagoSettings().language}. At most 130 characters: the speech bubble holds no more, so make one point. No quotes, no emoji, no hashtags.
 Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "...", "special": 0 to 3, "memory": "..." or null}
 "special" is how much this moment stands out to you: 0 routine, 1 a little interesting, 2 one you'll
@@ -444,7 +539,7 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
     }
     const special = Math.max(0, Math.min(3, Math.round(Number(out.special) || 0)));
     const memory = special >= 2 && out.memory ? clean(out.memory).slice(0, 200) : null;
-    last = { mood: out.mood, text: sentencesThatFit(text), action, special, memory };
+    last = { mood: out.mood, text: sentencesThatFit(text), action, special, memory, prompt };
     if (text.length <= BUBBLE_CHARS) return last;
     log(`too long (${text.length}):`, JSON.stringify(text));
     problem = `\nThat was ${text.length} characters: "${text}". The bubble holds ${BUBBLE_CHARS}. Say the same thing in fewer words.`;
@@ -863,7 +958,7 @@ async function tick() {
     const said = await brain(event);
     if (!said) return log("nothing new to say, staying quiet");
     const { mood, text, action } = said;
-    if (await say(event.w, mood, text, action)) {
+    if (await say(event.w, mood, text, action, said)) {
       lastSpokeAt = Date.now();
       remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text, action });
       takeIn(said, { about: event.w.title, cues: event.cues, fallback: event.gist });
@@ -1269,7 +1364,7 @@ function sidebarState() {
   const { name, eye } = moodName(m);
   return {
     pet: { species: chosenSpecies(), name: petName() },
-    bubble: currentBubble(),
+    bubble: (({ situation, ...shown }) => shown)(currentBubble()), // the situation is only for the +1
     // Rounded: the mood drifts every poll, and the sidebar redraws (closing open menus) on every change.
     mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy) },
     reaction,
@@ -1310,7 +1405,7 @@ async function onTouch(kind) {
     try {
       const said = (await brain(event)) ?? canned(event.kind); // they touched it: always answer
       const { mood: face, text, action } = said;
-      if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action)) {
+      if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action, said)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });
         takeIn(said, { about: "you", fallback: `you ${verb.replace(" you", " me")} and I ${{ love: "loved", meh: "didn't care about", hate: "hated" }[r.reaction]} it` });
@@ -1337,7 +1432,7 @@ async function onListen() {
     try {
       const said = (await brain(event)) ?? canned(event.kind); // they asked: always answer
       const { mood: face, text, action } = said;
-      if (await say({ id: sel?.id, title: "what's on my mind" }, face, text, action)) {
+      if (await say({ id: sel?.id, title: "what's on my mind" }, face, text, action, said)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: "listen", about: "you", mood: face, text, action });
         takeIn(said, { about: "you" });
@@ -1393,6 +1488,17 @@ async function sidebarAction(a) {
     }
   } else if (a.type === "update") {
     await runUpdate();
+  } else if (a.type === "like") {
+    // The +1 on the bubble, given or taken back. It counts once the bubble is gone.
+    if (Math.round(Number(a.at)) !== bubble.at || bubble.likeDone) throw new Error("that remark is gone");
+    bubble = { ...bubble, liked: a.liked === "true", likedAt: Date.now() };
+    if (!DRY) fs.writeFileSync(BUBBLE_FILE, JSON.stringify(bubble));
+  } else if (a.type === "like-said") {
+    // A +1 for a remark whose bubble is already gone, from the diary; counts right away. `note` is
+    // how the developer read it, `situation` what was going on, when the bubble's is gone too.
+    const h = history.find((h) => h.at === Math.round(Number(a.at)));
+    if (!h) throw new Error("no such remark in the diary");
+    await savorLike({ ...h, note: a.note ? String(a.note).slice(0, 600) : null, situation: a.situation ? String(a.situation).slice(0, 4000) : null });
   } else if (a.type === "listen") {
     await onListen();
   } else if (a.type === "touch") {
@@ -1412,6 +1518,7 @@ if (!DRY) {
   setInterval(() => readListening().catch((err) => log("reading ports failed:", err.message)), 10_000);
   setInterval(() => countClaudeSessions().catch((err) => log("counting Claude sessions failed:", err.message)), 10_000);
   keepMemories = true;
+  setInterval(likeIfGone, 5000);
   if (!fs.existsSync(MEMORY_FILE)) {
     memory = { sleptAt: 0, items: memoriesFromDiary() };
     saveMemory();

@@ -365,7 +365,9 @@ struct PetFooter: View {
         return VStack(spacing: 4) {
             if let bubble = model.daemon?.bubble, bubble.at > 0 {
                 let age = seconds - bubble.at / 1000
-                if age < Pet.showSeconds {
+                // A fresh +1 keeps the bubble up a moment longer, to take it back.
+                let clicked = bubble.likedAt.map { seconds - $0 / 1000 < 2 } ?? false
+                if age < Pet.showSeconds || clicked {
                     speech(bubble, age: age).opacity(age > Pet.showSeconds / 2 ? 0.5 : 1)
                 }
             }
@@ -495,8 +497,10 @@ struct PetFooter: View {
                 Text(bubble.text).font(.system(size: 11)).lineLimit(5).fixedSize(horizontal: false, vertical: true)
             }
             .padding(7)
+            .padding(.bottom, 6) // room for the +1
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#8A8A8A")!, lineWidth: 1))
+            .overlay(alignment: .bottomTrailing) { plusOne(bubble) }
             ZStack(alignment: .topTrailing) {
                 // The tail points down at the centered sprite.
                 Text("╲").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(hex: "#8A8A8A")!)
@@ -506,6 +510,18 @@ struct PetFooter: View {
                 Text(ago(age)).font(.system(size: 9)).foregroundStyle(.tertiary).padding(.trailing, 4).padding(.top, 1)
             }
         }
+    }
+
+    /// Faint until clicked: a +1 says the developer loved this remark (counted once the bubble is gone).
+    private func plusOne(_ bubble: DaemonState.Bubble) -> some View {
+        let on = bubble.liked == true
+        return Text("+1")
+            .font(.system(size: 9, weight: on ? .bold : .regular, design: .monospaced))
+            .foregroundStyle(on ? Color(hex: "#FF6B9A")! : Color.secondary.opacity(0.35))
+            .padding(.horizontal, 5).padding(.vertical, 3)
+            .contentShape(Rectangle())
+            .onTapGesture { model.act("like", ["at": String(format: "%.0f", bubble.at), "liked": on ? "false" : "true"]) }
+            .help(on ? "Take the +1 back" : "+1: I loved this one")
     }
 
     @ViewBuilder private var menu: some View {
@@ -545,6 +561,10 @@ struct PetFooter: View {
             let dots = settings?.claudeDots ?? true
             Button(checked(dots, "Claude Session Dots")) {
                 model.act("tamago-setting", ["key": "claudeDots", "value": dots ? "false" : "true"])
+            }
+            let swearing = settings?.swearing ?? false
+            Button(checked(swearing, "Swearing")) {
+                model.act("tamago-setting", ["key": "swearing", "value": swearing ? "false" : "true"])
             }
             let updates = settings?.checkUpdates ?? true
             Button(checked(updates, "Check for Updates Daily")) {

@@ -57,6 +57,10 @@ short call per remark; how often depends on **Talk**, below). What it sends is d
   robot hates slow turns and loves green tests, the penguin is scandalized by giant diffs, the
   ghost adores failing things at 3 a.m.), and its eyes show its mood. Now and then it also does
   something, like `*rattles spines at the sidebar*`.
+- **+1.** A faint +1 sits in the corner of every speech bubble. Click it when a remark lands; click
+  again within a moment to take it back. Tama works out with the model what made that remark good
+  (the timing, the joke, who it teased), keeps it as a memory that lasts weeks, is pleased about
+  it, and shows its latest favorites to the model as examples of what works. See [Memory](#memory).
 - **A mood.** It drifts on its own, follows the time of day, and moves with what happens in your
   sessions and with feeding, petting and poking. Nothing needs looking after: left alone, Tama
   settles into its character's normal mood.
@@ -76,6 +80,7 @@ Right-click Tama:
 | **Species**, **Rename** | 19 species; any name | Egg, "Tama" |
 | Settings → **Model** | Haiku (lightest on your usage), Sonnet, Opus (heaviest). Haiku is blander and slips into advice more. | Sonnet |
 | Settings → **Language** | English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Japanese, Korean, Chinese; any other with `tamago set` | English |
+| Settings → **Swearing** | on, off. On, Tama swears and has a crude sense of humor; teasing you is part of its character either way. | off |
 | Settings → **Claude Session Dots** | on, off | on |
 | Settings → **Check for Updates Daily** | on, off | on |
 
@@ -118,7 +123,8 @@ sidebar toggle button to pick another sidebar.
 - **To Anthropic, through your Claude Code login:** for each remark, a prompt with the digest
   described above: your last prompt, excerpts of the agent's answer, file names, a few lines of
   the last edit, command lines and error lines, workspace titles, Tama's diary and the memories
-  the moment brings back. Once a night, the day's memories, to consolidate them. Edits to files
+  the moment brings back. Once a night, the day's memories, to consolidate them. For each +1, the
+  remark and the prompt it was written from, to work out what made it land. Edits to files
   that look private (`.env`, keys, anything named secret, token, password or credential) are never
   quoted. Tama's calls run with hooks and tools off.
 - **To GitHub:** one request a day for the latest release, while the update check is on.
@@ -139,7 +145,8 @@ tamago say "hello" happy      # push a remark by hand
 ```
 
 Everything Tama keeps is in `~/.local/state/tamago/`: the log, `pet.json`, `mood.json`,
-`settings.json`, the diary (`history.jsonl`), the memories (`memories.json`) and the token.
+`settings.json`, the diary (`history.jsonl`), the memories (`memories.json`), the remarks you
+gave a +1 with why they landed (`liked.jsonl`) and the token.
 
 ## Troubleshooting
 
@@ -164,6 +171,7 @@ startup file. A setting picked in the menu wins over its variable.
 |---|---|---|
 | `TAMAGO_TALK`, `TAMAGO_MODEL`, `TAMAGO_LANG` | `normal`, `sonnet`, `English` | Defaults for Talk, Model and Language |
 | `TAMAGO_NO_UPDATE_CHECK` | unset | `1` turns the daily update check off by default |
+| `TAMAGO_SWEARING` | unset | `1` turns Swearing on by default |
 | `TAMAGO_CHANCE` | `0.35` | Base chance to remark on a finished turn on Normal (at least 0.7 for turns the character cares about strongly), scaled by mood |
 | `TAMAGO_DELAY_S` | `20-90` | Seconds between a turn ending and the remark |
 | `TAMAGO_COOLDOWN_S` | `150` | Minimum quiet time between remarks on Normal |
@@ -203,6 +211,11 @@ Brain?](https://www.youtube.com/watch?v=PqtggjVAi8M):
   commit that only deletes a failing test is no achievement, a funny exchange with you can be
   special. From 2 on it writes down what to remember, and the moment lifts or sours its mood a
   little. That rating, not the event's kind, sets how strongly a remark is remembered.
+- **And so do you.** A +1 on a remark counts once its bubble is gone. Tama then looks at the
+  situation it was in when it said it and writes down every layer of why it landed. That memory
+  starts as strong as memories get, lasts weeks, and is kept word for word through sleep instead of
+  being folded into a gist. Your latest six favorites go into every prompt with their reasons, so
+  Tama learns what you like rather than which words to repeat.
 - **Memories fade.** Without being brought back, most of a day's moments are gone within a day or
   two.
 - **Sleep consolidates.** When you've been away for 90 minutes, at most every 12 hours, Tama
