@@ -80,7 +80,6 @@ Right-click Tama:
 | **Species**, **Rename** | 19 species; any name | Egg, "Tama" |
 | Settings → **Model** | Haiku (lightest on your usage), Sonnet, Opus (heaviest). Haiku is blander and slips into advice more. | Sonnet |
 | Settings → **Language** | English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Japanese, Korean, Chinese; any other with `tamago set` | English |
-| Settings → **Swearing** | on, off. On, Tama swears and has a crude sense of humor; teasing you is part of its character either way. | off |
 | Settings → **Claude Session Dots** | on, off | on |
 | Settings → **Check for Updates Daily** | on, off | on |
 
@@ -171,7 +170,6 @@ startup file. A setting picked in the menu wins over its variable.
 |---|---|---|
 | `TAMAGO_TALK`, `TAMAGO_MODEL`, `TAMAGO_LANG` | `normal`, `sonnet`, `English` | Defaults for Talk, Model and Language |
 | `TAMAGO_NO_UPDATE_CHECK` | unset | `1` turns the daily update check off by default |
-| `TAMAGO_SWEARING` | unset | `1` turns Swearing on by default |
 | `TAMAGO_CHANCE` | `0.35` | Base chance to remark on a finished turn on Normal (at least 0.7 for turns the character cares about strongly), scaled by mood |
 | `TAMAGO_DELAY_S` | `20-90` | Seconds between a turn ending and the remark |
 | `TAMAGO_COOLDOWN_S` | `150` | Minimum quiet time between remarks on Normal |

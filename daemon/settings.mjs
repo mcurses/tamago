@@ -23,7 +23,6 @@ export const defaults = (env = process.env) => ({
   model: env.TAMAGO_MODEL || "sonnet",
   language: env.TAMAGO_LANG || "English",
   checkUpdates: env.TAMAGO_NO_UPDATE_CHECK !== "1",
-  swearing: env.TAMAGO_SWEARING === "1", // off unless asked for: nobody gets a foul-mouthed pet by surprise
 });
 
 /** The stored value for `key` from menu or command-line input, or an Error explaining why not. */
@@ -32,7 +31,6 @@ export function parseSetting(key, value) {
   switch (key) {
     case "claudeDots":
     case "checkUpdates":
-    case "swearing":
       if (!["true", "false"].includes(v)) return new Error(`${key} is true or false`);
       return v === "true";
     case "talk":

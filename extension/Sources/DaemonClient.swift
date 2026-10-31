@@ -71,7 +71,6 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var model: String?
         var language: String?
         var checkUpdates: Bool?
-        var swearing: Bool?
     }
 
     /// The daemon's version and a newer release, if its update check found one.

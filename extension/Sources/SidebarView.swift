@@ -562,10 +562,6 @@ struct PetFooter: View {
             Button(checked(dots, "Claude Session Dots")) {
                 model.act("tamago-setting", ["key": "claudeDots", "value": dots ? "false" : "true"])
             }
-            let swearing = settings?.swearing ?? false
-            Button(checked(swearing, "Swearing")) {
-                model.act("tamago-setting", ["key": "swearing", "value": swearing ? "false" : "true"])
-            }
             let updates = settings?.checkUpdates ?? true
             Button(checked(updates, "Check for Updates Daily")) {
                 model.act("tamago-setting", ["key": "checkUpdates", "value": updates ? "false" : "true"])

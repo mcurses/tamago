@@ -5,15 +5,14 @@ import assert from "node:assert/strict";
 import { defaults, parseSetting, talkProfile } from "../daemon/settings.mjs";
 
 test("defaults follow the old environment variables", () => {
-  assert.deepEqual(defaults({}), { claudeDots: true, talk: "normal", model: "sonnet", language: "English", checkUpdates: true, swearing: false });
-  const env = { TAMAGO_MODEL: "haiku", TAMAGO_LANG: "German", TAMAGO_TALK: "quiet", TAMAGO_NO_UPDATE_CHECK: "1", TAMAGO_SWEARING: "1" };
-  assert.deepEqual(defaults(env), { claudeDots: true, talk: "quiet", model: "haiku", language: "German", checkUpdates: false, swearing: true });
+  assert.deepEqual(defaults({}), { claudeDots: true, talk: "normal", model: "sonnet", language: "English", checkUpdates: true });
+  const env = { TAMAGO_MODEL: "haiku", TAMAGO_LANG: "German", TAMAGO_TALK: "quiet", TAMAGO_NO_UPDATE_CHECK: "1" };
+  assert.deepEqual(defaults(env), { claudeDots: true, talk: "quiet", model: "haiku", language: "German", checkUpdates: false });
   assert.equal(defaults({ TAMAGO_TALK: "loud" }).talk, "normal");
 });
 
 test("settings are validated", () => {
   assert.equal(parseSetting("claudeDots", "false"), false);
-  assert.equal(parseSetting("swearing", "true"), true);
   assert.equal(parseSetting("talk", "chatty"), "chatty");
   assert.ok(parseSetting("talk", "loud") instanceof Error);
   assert.equal(parseSetting("model", "claude-sonnet-5-5"), "claude-sonnet-5-5");
