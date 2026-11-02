@@ -128,3 +128,30 @@ or a note in `~/code/meum/docs/research/`: the projects aren't linked in AXOS.
   - Don't edit `~/.zshrc` or write cmux's defaults.
   - Use small commits ending with the Co-Authored-By line.
   - No `git stash`, no `git reset --hard`, no force-push.
+
+## Later on 2026-11-02 (session tamago-f9)
+
+Max ruled on request 3's two questions: Tama's state moves into meum's data folder, and the cmux
+path stops. Requests 1 and 4 are done too.
+
+- **Rename done:** the widget builds against `~/code/meum` (package "meum").
+- **State moved:** mood, memories, diary, likes, settings, token, pet, bubble and log now live in
+  `~/.local/state/meum/widgets/io.github.mcurses.tamago/`. Only cmux's old `daemon.out` and launchd
+  logs remain in `~/.local/state/tamago/`. `daemon/paths.mjs` picks the folder.
+- **cmux path stopped:** `scripts/ensure-running.sh` does nothing once that folder holds a token. The
+  line in `~/.zshrc` is still there (not edited) but no longer starts anything.
+- **Helper:** the widget manifest names `bin/tamago-daemon` → `scripts/meum-helper.sh`. It waits for
+  a daemon already running on the same state. It is verified in an isolated meum built from
+  `~/code/meum`: it starts at launch, restarts after a kill, stops on quit.
+- **The installed meum (`/Applications/meum.app`, built at 9b01f2f) predates helpers.** Until it is
+  updated, the daemon was started by hand (clean env, `MEUM_WIDGET_DATA` set; output in
+  `~/.local/state/meum/tamago-manual.log`). After a reboot nothing starts it until meum has helpers.
+  Once it does, its helper waits for a hand-started daemon and then takes over.
+- **"re: <workspace>" jumps** to the workspace in meum (bubble `aboutId`; verified by clicks in an
+  isolated meum, both the current build and the installed 9b01f2f app).
+- The widget finds the data folder next to meum's socket, not via `host.dataDirectory`, so it also
+  loads in meum builds without that API.
+- The daemon logs which clients read the state and which are refused (wrong token). The cmux
+  sidebar, still running, is refused now; that's expected.
+- Still open: the collapsed sidebar look (request 2), and the rest of one-click install (a bundled
+  runtime or a single executable, a zip, signing).
