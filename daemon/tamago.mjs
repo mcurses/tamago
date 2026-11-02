@@ -34,6 +34,7 @@ import { transcriptFor, transcriptForSession, transcriptsIn, turnEndsSince, dige
 import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
 import { firstJson } from "./json.mjs";
+import { meumCli, snapshotFromTree, tabOwners, hookEvent } from "./meum.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
@@ -93,7 +94,35 @@ async function cmux(...a) {
   return stdout;
 }
 
+// The host: cmux, or meum (daemon/meum.mjs), whichever answers. TAMAGO_HOST=cmux|meum pins one;
+// by default meum wins while it runs, and the choice is checked again every 30 s.
+const MEUM = meumCli();
+const HOST_PREF = process.env.TAMAGO_HOST ?? "auto";
+let host = null; // the host of the latest snapshot
+let hostCheckedAt = 0;
+
+async function currentHost() {
+  if (HOST_PREF === "cmux" || HOST_PREF === "meum") return HOST_PREF;
+  if (host && Date.now() - hostCheckedAt < 30_000) return host;
+  hostCheckedAt = Date.now();
+  const meumUp = MEUM ? await run(MEUM, ["ping"], { timeout: 3000 }).then(() => true, () => false) : false;
+  const next = meumUp ? "meum" : "cmux";
+  if (next !== host) log(`watching ${next}${next === "meum" ? " (meum answers)" : ""}`);
+  host = next;
+  return host;
+}
+const inMeum = () => host === "meum";
+
+const meumPrompts = new Map(); // workspace id -> { prompt, at }, from meum's agent hook events
+let meumOwners = new Map(); // tab id -> workspace id
+
 async function snapshot() {
+  if ((await currentHost()) === "meum") {
+    const { stdout } = await run(MEUM, ["--json", "tree"], { timeout: 10_000, maxBuffer: 16 * 1024 * 1024 });
+    const tree = JSON.parse(stdout);
+    meumOwners = tabOwners(tree);
+    return snapshotFromTree(tree, meumPrompts);
+  }
   return JSON.parse(await cmux("rpc", "extension.sidebar.snapshot", "{}"));
 }
 
@@ -396,6 +425,7 @@ async function say(about, mood, text, action = null, said = null) {
 /** Versions before 0.1 showed the bubble to the script sidebar as a workspace progress label;
  * clear any such label one of them left behind, since cmux's own sidebar shows it as progress. */
 async function clearOldLabels(snap) {
+  if (snap.host === "meum") return;
   for (const w of snap.workspaces) {
     if ((await progressOf(w.id).catch(() => "")).includes("tamago|")) await cmux("clear-progress", "--workspace", w.id).catch(() => {});
   }
@@ -658,6 +688,35 @@ function watchAgentEvents() {
     setTimeout(watchAgentEvents, 10_000);
   });
 }
+/** meum's agent hook events: which transcript a workspace's session writes, and its last prompt. */
+function watchMeumEvents() {
+  if (!MEUM) return;
+  const startedAt = Date.now();
+  const child = spawn(MEUM, ["--json", "events", "--types", "agent.hook"]);
+  readline.createInterface({ input: child.stdout }).on("line", async (line) => {
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      return;
+    }
+    // A tab opened since the last look: learn its workspace first.
+    if (ev?.type === "agent.hook" && !meumOwners.has(ev.data?.tab)) latestSnap = await snapshot().catch(() => latestSnap);
+    const h = hookEvent(ev, meumOwners);
+    if (!h) return;
+    const t = h.transcript && fs.existsSync(h.transcript) ? h.transcript : transcriptForSession(h.sessionId, h.cwd);
+    if (t) sessions.set(h.wsId, t);
+    if (h.prompt) meumPrompts.set(h.wsId, { prompt: h.prompt, at: Date.now() });
+    lastActivityAt = Date.now();
+  });
+  child.on("error", () => {});
+  child.on("exit", (code) => {
+    // Quiet while meum isn't running: the stream then ends at once, every time.
+    if (Date.now() - startedAt > 15_000) log("meum event stream exited", code, "- restarting in 10s");
+    setTimeout(watchMeumEvents, 10_000);
+  });
+}
+
 /** Seconds since the last keyboard, mouse or trackpad input (macOS HIDIdleTime); 0 if unknown. */
 async function inputIdleSeconds() {
   // Test hook: a file holding the idle seconds stands in for the real input clock.
@@ -732,7 +791,9 @@ function watchTurns() {
   // Each transcript belongs to one workspace: the one a hook tied it to, else the first in its dir.
   const owner = new Map();
   for (const w of latestSnap.workspaces) {
-    for (const file of transcriptsIn(workspaceDirs(w))) {
+    // meum's hooks name the transcript, which may live outside the workspace's directories.
+    const known = sessions.get(w.id);
+    for (const file of [...transcriptsIn(workspaceDirs(w)), ...(known ? [known] : [])]) {
       if (!owner.has(file) || sessions.get(w.id) === file) owner.set(file, w);
     }
   }
@@ -1284,13 +1345,14 @@ function queueDetails(id) {
 let stateReadAt = 0; // when the compiled sidebar last asked; no sidebar, no sweeping
 
 async function sweepDetails() {
-  if (Date.now() - stateReadAt > 60_000) return;
+  if (Date.now() - stateReadAt > 60_000 || inMeum()) return;
   const ids = (latestSnap?.workspaces ?? []).map((w) => w.id);
   for (const id of ids) await refreshDetails(id);
   for (const id of details.keys()) if (!ids.includes(id)) details.delete(id);
 }
 
 async function refreshSettings() {
+  if (inMeum()) return;
   try {
     const { stdout } = await run("defaults", ["export", "com.cmuxterm.app", "-"], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 });
     sidebarSettings = resolveSettings(stdout, readCmuxJson());
@@ -1319,7 +1381,7 @@ let claudeSessions = new Map(); // workspace id -> count
 let listening = null; // ports something listens on now; null until first read
 
 async function readListening() {
-  if (Date.now() - stateReadAt > 60_000) return;
+  if (Date.now() - stateReadAt > 60_000 || inMeum()) return;
   const { stdout } = await run("netstat", ["-anp", "tcp"], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
   listening = parseListening(stdout);
 }
@@ -1328,7 +1390,7 @@ async function readListening() {
 const livePorts = (ports) => (listening ? ports.filter((p) => listening.has(p)) : ports);
 
 async function countClaudeSessions() {
-  if (Date.now() - stateReadAt > 60_000 || !tamagoSettings().claudeDots) return;
+  if (Date.now() - stateReadAt > 60_000 || !tamagoSettings().claudeDots || inMeum()) return;
   const { stdout } = await run("ps", ["-axo", "pid=,tty=,comm="], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
   const procs = stdout.split("\n").map((l) => l.trim().split(/\s+/)).filter(([, tty]) => tty && tty !== "??");
   // Only terminals a person opened: those have a login or login shell. Claude Code's pre-warmed
@@ -1558,6 +1620,7 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
 log(`${petName()} is awake (${VERSION}, poll ${POLL_MS}ms, cooldown ${COOLDOWN_S}s${DRY ? ", dry-run" : ""})`);
 await tick();
 watchAgentEvents();
+watchMeumEvents();
 setInterval(() => {
   try {
     watchTurns();

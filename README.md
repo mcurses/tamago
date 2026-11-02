@@ -176,6 +176,8 @@ startup file. A setting picked in the menu wins over its variable.
 | `TAMAGO_ACTION_CHANCE` | `0.3` | How often a remark comes with an action |
 | `TAMAGO_AWAY_S`, `TAMAGO_BACK_S` | `300`, `1800` | No input this long counts as away; a break this long gets a welcome back |
 | `TAMAGO_PORT` | `47321` | Port of the daemon's local server (the prebuilt sidebar expects 47321) |
+| `TAMAGO_HOST` | `auto` | Where Tama watches your sessions: `cmux`, `meum`, or `auto` (meum while it's running, else cmux) |
+| `TAMAGO_MEUM` | auto | Path to meum's `meum` command, if it isn't in `/Applications/meum.app` |
 | `TAMAGO_CLAUDE` | auto | Path to the real `claude` binary. Use the real binary, not cmux's wrapper, which would log Tama's calls as workspace prompts. |
 
 ## Mood
@@ -279,8 +281,11 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
 - `extension/Package.swift` and `extension/Meum/` build Tama as a widget for meum, a cmux
   replacement in progress: only the pet, in the card under meum's own sidebar. It needs a meum
   checkout next to this repo (`../mux`, or `MEUM_REPO`); `scripts/build-meum-widget.sh` builds it
-  and installs it into `~/.local/share/meum/widgets/`. The daemon still learns about workspaces
-  from cmux for now.
+  and installs it into `~/.local/share/meum/widgets/`.
+- `daemon/meum.mjs` lets the daemon watch meum instead of cmux: it maps `meum tree` onto the
+  snapshot shape the daemon knows from cmux, and reads meum's agent hook events, which name each
+  session's transcript and prompt. While meum runs, the daemon watches it; the cmux-only work
+  (workspace details, ports, session dots) pauses.
 - `daemon/details.mjs` collects the per-workspace details (status pills, progress and log from
   `cmux sidebar-state`, re-read on cmux `sidebar` events and once a minute) and reads cmux's
   sidebar settings from its preferences and `cmux.json`. Ports are checked against what actually
