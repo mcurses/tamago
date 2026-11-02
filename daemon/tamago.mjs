@@ -39,6 +39,7 @@ import { stateDir } from "./paths.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
+import speciesFile from "../sidebar/species.json" with { type: "json" }; // built into the meum helper
 import { cuesOf, encode, cherish, recall, strongest, describeMemories, toReplay, consolidated, strengthNow } from "./memory.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, savor, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
@@ -98,7 +99,8 @@ async function cmux(...a) {
 // The host: cmux, or meum (daemon/meum.mjs), whichever answers. TAMAGO_HOST=cmux|meum pins one;
 // by default meum wins while it runs, and the choice is checked again every 30 s.
 const MEUM = meumCli();
-const HOST_PREF = process.env.TAMAGO_HOST ?? "auto";
+// meum's helper (MEUM_WIDGET_DATA set) watches meum only.
+const HOST_PREF = process.env.TAMAGO_HOST ?? (process.env.MEUM_WIDGET_DATA ? "meum" : "auto");
 let host = null; // the host of the latest snapshot
 let hostCheckedAt = 0;
 
@@ -177,7 +179,7 @@ function writePet(patch) {
 function petName() {
   return clean(readPet().name ?? "").slice(0, 24) || NAME;
 }
-const SPECIES = ["egg", ...Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, "sidebar/species.json"), "utf8")).species)];
+const SPECIES = ["egg", ...Object.keys(speciesFile.species)];
 
 function chosenSpecies() {
   const s = process.env.TAMAGO_SPECIES ?? readPet().species; // the env override is for trying a species out with --peek
@@ -662,6 +664,7 @@ async function onTurnEnd(wsId) {
 }
 
 function watchAgentEvents() {
+  if (HOST_PREF === "meum") return; // cmux's stream; pinned to meum, there's no cmux to hear
   const names = ["agent.hook.Stop", "agent.hook.SessionStart", "agent.hook.UserPromptSubmit"];
   const child = spawn(CMUX, ["events", "--reconnect", "--no-heartbeat", "--no-ack", ...names.flatMap((n) => ["--name", n])]);
   const handled = new Set(); // each hook arrives once per phase (received, completed, ...)
@@ -1057,8 +1060,11 @@ const PORT = Number(process.env.TAMAGO_PORT ?? 47321);
 // A release install (scripts/install.sh from GitHub) has a VERSION file and can update itself
 // (daemon/update.mjs); a git checkout reports `git describe` and updates with git pull.
 
-const RELEASE_INSTALL = fs.existsSync(path.join(ROOT, "VERSION"));
-const VERSION = RELEASE_INSTALL
+// The meum helper (scripts/build-meum-widget.sh) is one executable with its version built in
+// (bun --define); meum's widget library updates it, so it never updates itself.
+const BUILT_VERSION = typeof TAMAGO_BUILD_VERSION === "string" ? TAMAGO_BUILD_VERSION : null; // eslint-disable-line no-undef
+const RELEASE_INSTALL = !BUILT_VERSION && fs.existsSync(path.join(ROOT, "VERSION"));
+const VERSION = BUILT_VERSION ?? (RELEASE_INSTALL
   ? fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim()
   : (() => {
       try {
@@ -1066,7 +1072,7 @@ const VERSION = RELEASE_INSTALL
       } catch {
         return "dev";
       }
-    })();
+    })());
 const UPDATE_FILE = path.join(STATE_DIR, "update.json"); // { checkedAt, latest, tarball, announced }
 let updating = false;
 
@@ -1096,6 +1102,7 @@ async function announceUpdate() {
 
 /** Installs the newest release, then hands over to its install.sh, which restarts the daemon. */
 async function runUpdate() {
+  if (BUILT_VERSION) throw new Error("meum's widget library updates Tama: Settings → Widgets");
   if (!RELEASE_INSTALL) throw new Error("this is a git checkout; update it with git pull and scripts/install.sh");
   if (updating) return;
   const u = availableUpdate() ?? (await checkForUpdate({ force: true }), availableUpdate());
@@ -1296,14 +1303,28 @@ if (args[0] === "--say" || args[0] === "--listen") {
   process.exit(0);
 }
 
-try {
-  const other = Number(fs.readFileSync(PIDFILE, "utf8"));
-  if (other && other !== process.pid) {
+/** The pid of another daemon running on this state, or null. */
+function otherDaemon() {
+  try {
+    const other = Number(fs.readFileSync(PIDFILE, "utf8"));
+    if (!other || other === process.pid) return null;
     process.kill(other, 0);
-    console.error(`tamago already running (pid ${other})`);
+    return other;
+  } catch {
+    return null;
+  }
+}
+
+if (otherDaemon()) {
+  // As meum's helper, wait for it and take over when it exits (meum would only restart us with
+  // backoff); anywhere else, leave it running.
+  if (!process.env.MEUM_WIDGET_DATA) {
+    console.error(`tamago already running (pid ${otherDaemon()})`);
     process.exit(1);
   }
-} catch {}
+  console.log(`${new Date().toISOString()} daemon ${otherDaemon()} already runs on this state; waiting for it to exit`);
+  while (otherDaemon()) await new Promise((r) => setTimeout(r, 5000));
+}
 fs.writeFileSync(PIDFILE, String(process.pid));
 
 // ---------- compiled sidebar ----------
@@ -1366,6 +1387,7 @@ async function refreshSettings() {
 }
 
 function watchSidebarEvents() {
+  if (HOST_PREF === "meum") return; // cmux's stream, as above
   const child = spawn(CMUX, ["events", "--reconnect", "--no-heartbeat", "--no-ack", "--category", "sidebar"]);
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     try {

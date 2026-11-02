@@ -24,8 +24,3 @@ export function stateDir(env = process.env, home = os.homedir()) {
   if (fs.existsSync(path.join(meum, "token"))) return meum;
   return path.join(home, ".local/state/tamago");
 }
-
-// When run as a script: print the state dir (scripts/ensure-running.sh and the meum helper use it).
-if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
-  console.log(stateDir());
-}

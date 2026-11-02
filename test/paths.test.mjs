@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { stateDir, meumDataDir, MEUM_WIDGET_ID } from "../daemon/paths.mjs";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "tamago-paths-"));
@@ -38,12 +37,4 @@ test("once the state moved to meum (a token there), meum's folder", () => {
 
 test("MEUM_STATE_DIR moves meum's folder", () => {
   assert.equal(meumDataDir({ MEUM_STATE_DIR: "/m" }, home), path.join("/m/widgets", MEUM_WIDGET_ID));
-});
-
-test("run as a script, it prints the state dir", () => {
-  const out = execFileSync(process.execPath, [new URL("../daemon/paths.mjs", import.meta.url).pathname], {
-    env: { ...process.env, TAMAGO_STATE_DIR: "/printed" },
-    encoding: "utf8",
-  });
-  assert.equal(out.trim(), "/printed");
 });
