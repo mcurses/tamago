@@ -85,7 +85,8 @@ struct TamagoCard: View {
     @State private var asked: CGFloat = 0
 
     var body: some View {
-        PetFooter(model: model, bottomInset: look.appearance.bottomInset + 8, animating: look.visible, inCmux: false)
+        PetFooter(model: model, bottomInset: look.appearance.bottomInset + 8, animating: look.visible, inCmux: false,
+                  openWorkspace: { id in if let uuid = UUID(uuidString: id) { host.selectWorkspace(uuid) } })
             .fixedSize(horizontal: false, vertical: true)
             .background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)

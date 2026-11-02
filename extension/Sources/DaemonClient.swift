@@ -11,6 +11,7 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var at: Double // epoch milliseconds; 0 = no comment yet
         var mood: String
         var about: String
+        var aboutId: String? // meum's id of the workspace the remark is about, if it's about one
         var text: String
         var action: String? // a stage direction like "bristles its spines", now and then
         var liked: Bool? // the developer's +1, until the bubble is gone

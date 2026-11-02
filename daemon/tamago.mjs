@@ -412,6 +412,9 @@ async function say(about, mood, text, action = null, said = null) {
     at: Date.now(),
     mood: MOODS.includes(mood) ? mood : "idle",
     about: clean(about.title).slice(0, 40) || "-",
+    // meum's workspace the remark is about, so the "re:" line can jump there; null for a remark
+    // about a snack or Tama's own thoughts, and under cmux.
+    aboutId: inMeum() && about.id ? String(about.id) : null,
     text: sentencesThatFit(text) || "-",
     action: action ? clean(action).replace(/^\*+|\*+$/g, "").slice(0, 40) || null : null,
     species: chosenSpecies(),
@@ -1476,7 +1479,7 @@ async function onTouch(kind) {
     try {
       const said = (await brain(event)) ?? canned(event.kind); // they touched it: always answer
       const { mood: face, text, action } = said;
-      if (await say({ id: sel?.id, title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action, said)) {
+      if (await say({ title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action, said)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });
         takeIn(said, { about: "you", fallback: `you ${verb.replace(" you", " me")} and I ${{ love: "loved", meh: "didn't care about", hate: "hated" }[r.reaction]} it` });
@@ -1503,7 +1506,7 @@ async function onListen() {
     try {
       const said = (await brain(event)) ?? canned(event.kind); // they asked: always answer
       const { mood: face, text, action } = said;
-      if (await say({ id: sel?.id, title: "what's on my mind" }, face, text, action, said)) {
+      if (await say({ title: "what's on my mind" }, face, text, action, said)) {
         lastSpokeAt = Date.now();
         remember({ at: Date.now(), kind: "listen", about: "you", mood: face, text, action });
         takeIn(said, { about: "you" });

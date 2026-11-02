@@ -12,6 +12,8 @@ struct PetFooter: View {
     var animating = true
     /// Menu entries that are about cmux's sidebar (session dots, where workspace details are set).
     var inCmux = true
+    /// Shows the workspace a remark is about (meum: `host.selectWorkspace`); nil leaves "re:" plain.
+    var openWorkspace: ((String) -> Void)?
     @State private var renaming = false
     @State private var draft = ""
     @FocusState private var focused: Bool
@@ -170,10 +172,23 @@ struct PetFooter: View {
         }
     }
 
+    /// "re: <workspace>", a link to the workspace when the host can show it.
+    @ViewBuilder private func about(_ bubble: DaemonState.Bubble) -> some View {
+        let label = Text("re: \(bubble.about)").font(.system(size: 9)).lineLimit(1)
+        if let id = bubble.aboutId, let openWorkspace {
+            Button { openWorkspace(id) } label: { label.underline() }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Show \(bubble.about)")
+                .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+        } else {
+            label.foregroundStyle(.secondary)
+        }
+    }
+
     private func speech(_ bubble: DaemonState.Bubble, age: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("re: \(bubble.about)").font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                about(bubble)
                 if let action = bubble.action, !action.isEmpty {
                     Text(verbatim: "*\(action)*").font(.system(size: 10).italic()).foregroundStyle(.secondary).lineLimit(2)
                 }
