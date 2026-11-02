@@ -280,7 +280,7 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
   `extension/Harness/` renders the footer offscreen for `scripts/render-pet.sh`.
 - `extension/Package.swift` and `extension/Meum/` build Tama as a widget for meum, a cmux
   replacement in progress: only the pet, in the card under meum's own sidebar. It needs a meum
-  checkout next to this repo (`../mux`, or `MEUM_REPO`); `scripts/build-meum-widget.sh` builds it
+  checkout next to this repo (`../meum`, or `MEUM_REPO`); `scripts/build-meum-widget.sh` builds it
   and installs it into `~/.local/share/meum/widgets/`.
 - `daemon/meum.mjs` lets the daemon watch meum instead of cmux: it maps `meum tree` onto the
   snapshot shape the daemon knows from cmux, and reads meum's agent hook events, which name each
