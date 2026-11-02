@@ -7,10 +7,14 @@ struct Pet {
     static let talkSeconds = 6.0 // how long Tama "talks" after a new comment
     static let reactSeconds = 2.6 // how long a feed / pet / poke animation runs
 
+    /// Where species.json is when the host app's bundle doesn't have it (the meum widget sets this to
+    /// the file next to its library). Set it before the first sprite is drawn.
+    nonisolated(unsafe) static var speciesURL: URL?
+
     /// species name -> 3 frames x 5 lines, "{E}" marking the eyes.
     static let art: [String: [[String]]] = {
         struct File: Decodable { var species: [String: [[String]]] }
-        guard let url = Bundle.main.url(forResource: "species", withExtension: "json"),
+        guard let url = speciesURL ?? Bundle.main.url(forResource: "species", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let file = try? JSONDecoder().decode(File.self, from: data) else { return [:] }
         return file.species

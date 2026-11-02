@@ -14,6 +14,6 @@ mkdir -p $BUILD/harness
 xcrun swiftc -target $(uname -m)-apple-macos14.0 -swift-version 5 -parse-as-library \
   -module-name TamagoHarness -I $OBJ -L $OBJ -lCmuxExtensionKit \
   -o $BUILD/harness/render-pet \
-  $ROOT/extension/Sources/{SidebarModel,SidebarView,Pet,DaemonClient}.swift $ROOT/extension/Harness/main.swift
+  $ROOT/extension/Sources/{PetModel,SidebarModel,PetFooter,SidebarView,Pet,DaemonClient}.swift $ROOT/extension/Harness/main.swift
 cp $ROOT/sidebar/species.json $BUILD/harness/species.json # Bundle.main of a tool is its directory
 $BUILD/harness/render-pet "${@:-$BUILD/pet-sheet.png}"
