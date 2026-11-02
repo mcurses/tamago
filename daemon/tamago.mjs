@@ -102,7 +102,7 @@ let host = null; // the host of the latest snapshot
 let hostCheckedAt = 0;
 
 async function currentHost() {
-  if (HOST_PREF === "cmux" || HOST_PREF === "meum") return HOST_PREF;
+  if (HOST_PREF === "cmux" || HOST_PREF === "meum") return (host = HOST_PREF);
   if (host && Date.now() - hostCheckedAt < 30_000) return host;
   hostCheckedAt = Date.now();
   const meumUp = MEUM ? await run(MEUM, ["ping"], { timeout: 3000 }).then(() => true, () => false) : false;
