@@ -15,6 +15,7 @@ struct PetFooter: View {
     /// Shows the workspace a remark is about (meum: `host.selectWorkspace`); nil leaves "re:" plain.
     var openWorkspace: ((String) -> Void)?
     @State private var renaming = false
+    @State private var hoveringAbout = false
     @State private var draft = ""
     @FocusState private var focused: Bool
 
@@ -176,10 +177,13 @@ struct PetFooter: View {
     @ViewBuilder private func about(_ bubble: DaemonState.Bubble) -> some View {
         let label = Text("re: \(bubble.about)").font(.system(size: 9)).lineLimit(1)
         if let id = bubble.aboutId, let openWorkspace {
-            Button { openWorkspace(id) } label: { label.underline() }
+            Button { openWorkspace(id) } label: { label.underline(hoveringAbout) }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help("Show \(bubble.about)")
-                .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+                .onHover { inside in
+                    hoveringAbout = inside
+                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
         } else {
             label.foregroundStyle(.secondary)
         }
