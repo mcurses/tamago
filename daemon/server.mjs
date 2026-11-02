@@ -21,9 +21,29 @@ export function startServer({ port, token, getState, act, log }) {
     res.end(JSON.stringify(body));
   };
 
+  // Who reads the state, and who is refused: logged once per client (and per minute for refusals),
+  // so a sidebar or widget that reads the wrong token file shows up in the log.
+  const seen = new Set();
+  const refusedAt = new Map();
+  const client = (req) => String(req.headers["user-agent"] ?? "?").split(" ")[0];
+
   const server = http.createServer((req, res) => {
-    if (!authorized(req)) return reply(res, 403, { ok: false, error: "bad token" });
-    if (req.method === "GET" && req.url === "/state") return reply(res, 200, getState());
+    if (!authorized(req)) {
+      const who = client(req);
+      if (Date.now() - (refusedAt.get(who) ?? 0) > 60_000) {
+        refusedAt.set(who, Date.now());
+        log(`refused ${req.method} ${req.url} from ${who}: wrong or missing token`);
+      }
+      return reply(res, 403, { ok: false, error: "bad token" });
+    }
+    if (req.method === "GET" && req.url === "/state") {
+      const who = client(req);
+      if (!seen.has(who)) {
+        seen.add(who);
+        log(`serving state to ${who}`);
+      }
+      return reply(res, 200, getState());
+    }
     if (req.method !== "POST" || req.url !== "/action") return reply(res, 404, { ok: false, error: "not found" });
     let body = "";
     req.on("data", (chunk) => {
