@@ -274,7 +274,13 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
   workspaces from cmux itself; Tama and every workspace action cmux's extension API lacks (pin,
   rename, reorder, colors, close) go through `daemon/server.mjs` (`GET /state`, `POST /action`).
   The sandbox lets it read exactly one file outside its container, the daemon's token.
+  Tama itself (`PetFooter.swift`, `PetModel.swift`) doesn't depend on cmux, so other hosts can show it.
   `extension/Harness/` renders the footer offscreen for `scripts/render-pet.sh`.
+- `extension/Package.swift` and `extension/Meum/` build Tama as a widget for meum, a cmux
+  replacement in progress: only the pet, in the card under meum's own sidebar. It needs a meum
+  checkout next to this repo (`../mux`, or `MEUM_REPO`); `scripts/build-meum-widget.sh` builds it
+  and installs it into `~/.local/share/meum/widgets/`. The daemon still learns about workspaces
+  from cmux for now.
 - `daemon/details.mjs` collects the per-workspace details (status pills, progress and log from
   `cmux sidebar-state`, re-read on cmux `sidebar` events and once a minute) and reads cmux's
   sidebar settings from its preferences and `cmux.json`. Ports are checked against what actually
