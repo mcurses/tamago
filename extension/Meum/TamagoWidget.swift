@@ -37,7 +37,7 @@ final class CardLook: ObservableObject {
 @MainActor
 final class TamagoWidget: MeumWidget {
     let host: MeumWidgetHost
-    let model = PetModel()
+    let model: PetModel
     let look: CardLook
 
     lazy var view: NSView = {
@@ -48,6 +48,7 @@ final class TamagoWidget: MeumWidget {
 
     init(host: MeumWidgetHost) {
         self.host = host
+        model = PetModel(client: DaemonClient(tokenFile: Self.dataDirectory(host).appendingPathComponent("token").path))
         look = CardLook(host.appearance, visible: host.visibility.isVisible)
         model.paused = !look.visible
     }
@@ -61,6 +62,14 @@ final class TamagoWidget: MeumWidget {
     }
 
     func willUnload() { model.stop() }
+
+    /// meum's data folder for this widget, where the daemon (the widget's helper) keeps Tama's state:
+    /// `<meum state dir>/widgets/<id>/`. Worked out from the socket, which sits in meum's state dir,
+    /// rather than `host.dataDirectory`, which meum builds before November 2026 don't have.
+    static func dataDirectory(_ host: MeumWidgetHost) -> URL {
+        URL(fileURLWithPath: host.socketPath).deletingLastPathComponent()
+            .appendingPathComponent("widgets").appendingPathComponent("io.github.mcurses.tamago")
+    }
 }
 
 private struct HeightKey: PreferenceKey {

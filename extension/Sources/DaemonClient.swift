@@ -132,12 +132,15 @@ struct DaemonClient: Sendable {
     let base: URL
     let tokenFile: String
 
-    init() {
+    /// `tokenFile` nil: the cmux location. The meum widget passes the one in meum's data folder.
+    init(tokenFile: String? = nil) {
         let info = Bundle.main.infoDictionary ?? [:]
-        base = URL(string: info["TamagoDaemonURL"] as? String ?? "http://127.0.0.1:47321")!
+        // TAMAGO_PORT as for the daemon: a test meum passes it to its widget and the helper alike.
+        let port = ProcessInfo.processInfo.environment["TAMAGO_PORT"].flatMap { Int($0) }
+        base = URL(string: port.map { "http://127.0.0.1:\($0)" } ?? info["TamagoDaemonURL"] as? String ?? "http://127.0.0.1:47321")!
         // NSHomeDirectory() is the sandbox container; the token lives in the real home.
         let home = getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? NSHomeDirectory()
-        tokenFile = home + "/.local/state/tamago/token"
+        self.tokenFile = tokenFile ?? home + "/.local/state/tamago/token"
     }
 
     private var token: String {

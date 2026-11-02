@@ -10,7 +10,7 @@ class PetModel: ObservableObject {
     /// No polling while nobody can see Tama (the meum widget sets this from its visibility).
     var paused = false
 
-    private let client = DaemonClient()
+    private let client: DaemonClient
     private var poller: Task<Void, Never>?
     // Every publish redraws the view, and a redraw closes any open menu. So while a menu is
     // open, updates wait here and are applied when it closes.
@@ -18,13 +18,15 @@ class PetModel: ObservableObject {
     private var heldDaemon: DaemonState?
     private var menuObservers: [NSObjectProtocol] = []
 
-    init() {
+    init(client: DaemonClient = DaemonClient()) {
+        self.client = client
         poll()
         watchMenus()
     }
 
     /// A model with fixed state and no daemon polling, for scripts/render-pet.sh.
     init(preview state: DaemonState) {
+        client = DaemonClient()
         daemon = state
         daemonOnline = true
     }

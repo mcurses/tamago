@@ -5,7 +5,12 @@
 # install.sh adds a line to the shell's startup file that runs this in every new cmux terminal, so
 # the daemon comes back after a cmux restart. A shell may not have node on its PATH yet at that
 # point (nvm loads later), hence the lookup below.
+#
+# Once Tama's state lives in meum's data folder for the Tamago widget (daemon/paths.mjs), meum runs
+# the daemon as the widget's helper, so this does nothing: one Tama, not two.
 ROOT=${0:A:h:h}
+MEUM_TAMA=${MEUM_STATE_DIR:-~/.local/state/meum}/widgets/io.github.mcurses.tamago
+[[ -z ${TAMAGO_STATE_DIR:-} && -f $MEUM_TAMA/token ]] && exit 0
 STATE=${TAMAGO_STATE_DIR:-~/.local/state/tamago}
 mkdir -p $STATE
 if [[ -f $STATE/tamago.pid ]] && kill -0 $(<$STATE/tamago.pid) 2>/dev/null; then

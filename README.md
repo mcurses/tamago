@@ -145,7 +145,9 @@ tamago say "hello" happy      # push a remark by hand
 
 Everything Tama keeps is in `~/.local/state/tamago/`: the log, `pet.json`, `mood.json`,
 `settings.json`, the diary (`history.jsonl`), the memories (`memories.json`), the remarks you
-gave a +1 with why they landed (`liked.jsonl`) and the token.
+gave a +1 with why they landed (`liked.jsonl`) and the token. With the meum widget, all of it
+lives in meum's data folder for the widget instead, `~/.local/state/meum/widgets/io.github.mcurses.tamago/`
+(`daemon/paths.mjs`).
 
 ## Troubleshooting
 
@@ -281,7 +283,11 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
 - `extension/Package.swift` and `extension/Meum/` build Tama as a widget for meum, a cmux
   replacement in progress: only the pet, in the card under meum's own sidebar. It needs a meum
   checkout next to this repo (`../meum`, or `MEUM_REPO`); `scripts/build-meum-widget.sh` builds it
-  and installs it into `~/.local/share/meum/widgets/`.
+  and installs it into `~/.local/share/meum/widgets/`. The widget's manifest names a helper,
+  `bin/tamago-daemon` (`scripts/meum-helper.sh`): meum starts the daemon with itself, restarts it
+  when it dies and stops it on quit, and the daemon keeps Tama's state in meum's data folder for the
+  widget. Once the state is there, `scripts/ensure-running.sh` no longer starts a daemon from cmux
+  terminals. A helper waits for a daemon that already runs on the same state instead of doubling it.
 - `daemon/meum.mjs` lets the daemon watch meum instead of cmux: it maps `meum tree` onto the
   snapshot shape the daemon knows from cmux, and reads meum's agent hook events, which name each
   session's transcript and prompt. While meum runs, the daemon watches it; the cmux-only work

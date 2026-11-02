@@ -35,6 +35,7 @@ import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
 import { firstJson } from "./json.mjs";
 import { meumCli, snapshotFromTree, tabOwners, hookEvent } from "./meum.mjs";
+import { stateDir } from "./paths.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
@@ -67,7 +68,7 @@ const IDLE_CHANCE = 0.25;
 const SWITCH_CHANCE = 0.1;
 const MOODS = ["idle", "smug", "happy", "shock", "sleepy", "sad", "grumpy"];
 
-const STATE_DIR = process.env.TAMAGO_STATE_DIR ?? path.join(os.homedir(), ".local/state/tamago"); // override for test instances
+const STATE_DIR = stateDir(); // daemon/paths.mjs: meum's data folder for Tamago, or ~/.local/state/tamago; TAMAGO_STATE_DIR for test instances
 const LOG = path.join(STATE_DIR, "tamago.log");
 const PIDFILE = path.join(STATE_DIR, "tamago.pid");
 const DENIED_FILE = path.join(STATE_DIR, "denied"); // pid of an instance the cmux socket refuses
@@ -1286,7 +1287,7 @@ if (args[0] === "--say" || args[0] === "--listen") {
     ),
   }).catch(() => null);
   if (!res?.ok) {
-    console.error("the daemon isn't running; start it from a cmux terminal (scripts/ensure-running.sh)");
+    console.error("the daemon isn't running; meum starts it with the Tamago widget, cmux from a terminal (scripts/ensure-running.sh)");
     process.exit(1);
   }
   process.exit(0);
