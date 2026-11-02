@@ -27,10 +27,13 @@ private func besideLibrary(_ name: String) -> URL? {
 final class CardLook: ObservableObject {
     @Published var appearance: MeumWidgetAppearance
     @Published var visible: Bool
+    /// meum's sidebar is collapsed to its rail.
+    @Published var collapsed: Bool
 
-    init(_ appearance: MeumWidgetAppearance, visible: Bool) {
+    init(_ appearance: MeumWidgetAppearance, visible: Bool, collapsed: Bool) {
         self.appearance = appearance
         self.visible = visible
+        self.collapsed = collapsed
     }
 }
 
@@ -49,7 +52,7 @@ final class TamagoWidget: MeumWidget {
     init(host: MeumWidgetHost) {
         self.host = host
         model = PetModel(client: DaemonClient(tokenFile: Self.dataDirectory(host).appendingPathComponent("token").path))
-        look = CardLook(host.appearance, visible: host.visibility.isVisible)
+        look = CardLook(host.appearance, visible: host.visibility.isVisible, collapsed: host.isSidebarCollapsed)
         model.paused = !look.visible
     }
 
@@ -62,6 +65,21 @@ final class TamagoWidget: MeumWidget {
     }
 
     func willUnload() { model.stop() }
+
+    var supportsCollapsedSidebar: Bool { true }
+
+    func sidebarCollapsedDidChange(_ collapsed: Bool) { look.collapsed = collapsed }
+
+    /// `meum widget send <tab> '{"look": "rail"}'` (or "full") shows this instance as in the collapsed
+    /// sidebar, to check the rail look in a tile, where it can be screenshotted.
+    func receive(_ message: String, reply: @escaping @MainActor (String) -> Void) {
+        let json = (try? JSONSerialization.jsonObject(with: Data(message.utf8))) as? [String: Any]
+        switch json?["look"] as? String {
+        case "rail": look.collapsed = true; reply(#"{"ok": true}"#)
+        case "full": look.collapsed = false; reply(#"{"ok": true}"#)
+        default: reply(#"{"error": "send {\"look\": \"rail\"} or {\"look\": \"full\"}"}"#)
+        }
+    }
 
     /// meum's data folder for this widget, where the daemon (the widget's helper) keeps Tama's state:
     /// `<meum state dir>/widgets/<id>/`. Worked out from the socket, which sits in meum's state dir,
@@ -86,7 +104,8 @@ struct TamagoCard: View {
 
     var body: some View {
         PetFooter(model: model, bottomInset: look.appearance.bottomInset + 8, animating: look.visible, inCmux: false,
-                  openWorkspace: { id in if let uuid = UUID(uuidString: id) { host.selectWorkspace(uuid) } })
+                  openWorkspace: { id in if let uuid = UUID(uuidString: id) { host.selectWorkspace(uuid) } },
+                  collapsed: look.collapsed)
             .fixedSize(horizontal: false, vertical: true)
             .background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)

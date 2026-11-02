@@ -14,8 +14,14 @@ struct PetFooter: View {
     var inCmux = true
     /// Shows the workspace a remark is about (meum: `host.selectWorkspace`); nil leaves "re:" plain.
     var openWorkspace: ((String) -> Void)?
+    /// meum's collapsed sidebar, a rail about 60 pt wide: Tama alone in a small font, and a dot while
+    /// it has something to say, which shows the bubble on hover.
+    var collapsed = false
     @State private var renaming = false
     @State private var hoveringAbout = false
+    @State private var hoveringDot = false
+    @State private var hoveringSpeech = false
+    @State private var speechShown = false
     @State private var draft = ""
     @FocusState private var focused: Bool
 
@@ -47,7 +53,57 @@ struct PetFooter: View {
         return now.timeIntervalSince1970 - at / 1000 < Pet.reactSeconds + 0.5
     }
 
-    private func footer(at now: Date) -> some View {
+    @ViewBuilder private func footer(at now: Date) -> some View {
+        if collapsed { rail(at: now) } else { full(at: now) }
+    }
+
+    /// The rail: the whole character at 7 pt (12 characters fit in about 50 pt), a dot above it
+    /// while a remark is up, and nothing else.
+    private func rail(at now: Date) -> some View {
+        let seconds = now.timeIntervalSince1970
+        let pet = Pet(state: model.daemon, now: now)
+        let bubble = model.daemon?.bubble
+        let age = bubble.map { seconds - $0.at / 1000 } ?? .infinity
+        let saying = bubble.map { $0.at > 0 } == true && age < Pet.showSeconds
+        return VStack(spacing: 4) {
+            Circle()
+                .fill(Color(hex: "#E0AF68")!)
+                .frame(width: 7, height: 7)
+                .opacity(saying ? (age > Pet.showSeconds / 2 ? 0.5 : 1) : 0)
+                .frame(width: 24, height: 14)
+                .contentShape(Rectangle())
+                .onHover { inside in hoveringDot = inside && saying; updateSpeech() }
+                .popover(isPresented: $speechShown, arrowEdge: .trailing) {
+                    if let bubble {
+                        speech(bubble, age: age)
+                            .frame(width: 240)
+                            .padding(8)
+                            .onHover { inside in hoveringSpeech = inside; updateSpeech() }
+                    }
+                }
+            sprite(pet, seconds: seconds, size: 7)
+                .fixedSize()
+                .opacity(model.daemonOnline ? 1 : 0.4) // dimmed while the daemon is down, as "asleep" in full
+                .help(model.daemonOnline ? name : "\(name) · asleep")
+        }
+        .padding(.top, 6)
+        .padding(.bottom, bottomInset)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The popover follows the pointer over the dot or the bubble, with a short grace to move
+    /// from one to the other.
+    private func updateSpeech() {
+        if hoveringDot || hoveringSpeech {
+            speechShown = true
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if !hoveringDot && !hoveringSpeech { speechShown = false }
+            }
+        }
+    }
+
+    private func full(at now: Date) -> some View {
         let seconds = now.timeIntervalSince1970
         let pet = Pet(state: model.daemon, now: now)
         return VStack(spacing: 4) {
@@ -78,14 +134,14 @@ struct PetFooter: View {
 
     // MARK: sprite and reactions
 
-    private func sprite(_ pet: Pet, seconds: Double) -> some View {
+    private func sprite(_ pet: Pet, seconds: Double, size: CGFloat = 11) -> some View {
         let r = pet.reaction
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(pet.lines(fifths: Int(seconds * 5)).enumerated()), id: \.offset) { _, line in
                 Text(line)
             }
         }
-        .font(.system(size: 11, design: .monospaced))
+        .font(.system(size: size, design: .monospaced))
         .offset(x: shake(r, seconds: seconds))
         .overlay(alignment: .trailing) { if let r, r.kind == "feed" { snack(r) } }
         .overlay(alignment: .top) { if let r, r.kind == "pet" { stroke(r) } }

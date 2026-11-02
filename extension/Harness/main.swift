@@ -3,6 +3,7 @@
 //
 //   scripts/render-pet.sh [out.png]
 //   scripts/render-pet.sh --readme docs/preview.png
+//   scripts/render-pet.sh --rail rail.png    every species in meum's collapsed sidebar (60 pt)
 
 import AppKit
 import CmuxExtensionKit
@@ -140,6 +141,33 @@ func settingsJSON(_ allOn: Bool) -> [String: Any] {
     print("wrote \(out) (\(image.width)x\(image.height))")
 }
 
+// MARK: meum's collapsed sidebar
+
+/// Every species as meum's 60 pt rail shows it, in pairs: no remark, then a remark up (the dot).
+@MainActor func railSheet() -> some View {
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    let ms = t0.timeIntervalSince1970 * 1000
+    return HStack(alignment: .bottom, spacing: 6) {
+        ForEach(Pet.speciesNames, id: \.self) { species in
+            ForEach([false, true], id: \.self) { saying in
+                let s = Scenario(label: "", species: species, mood: "content", kind: "-", response: "-",
+                                 bubble: saying ? "A remark is up." : nil)
+                VStack(spacing: 2) {
+                    PetFooter(model: SidebarModel(preview: state(s, reactionAt: ms)), frozenAt: t0, bottomInset: 8, collapsed: true)
+                        .frame(width: 60)
+                        .background(Color(hex: "#262626")!)
+                        .clipped()
+                    Text(saying ? "" : species).font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
+                        .frame(width: 60).fixedSize()
+                }
+            }
+        }
+    }
+    .padding(10)
+    .background(Color(hex: "#1E1E1E")!)
+    .environment(\.colorScheme, .dark)
+}
+
 // MARK: README preview
 
 /// The default egg with a real remark Tama once made (2026-10-21), in the sidebar's dark look.
@@ -162,6 +190,10 @@ func settingsJSON(_ allOn: Bool) -> [String: Any] {
 struct RenderPet {
     @MainActor static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
+        if args.first == "--rail" {
+            write(railSheet(), to: args.count > 1 ? args[1] : "rail.png")
+            return
+        }
         if args.first == "--readme" {
             write(readmePreview(), to: args.count > 1 ? args[1] : "preview.png")
             return

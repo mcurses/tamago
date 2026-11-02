@@ -284,10 +284,17 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
   replacement in progress: only the pet, in the card under meum's own sidebar. It needs a meum
   checkout next to this repo (`../meum`, or `MEUM_REPO`); `scripts/build-meum-widget.sh` builds it
   and installs it into `~/.local/share/meum/widgets/`. The widget's manifest names a helper,
-  `bin/tamago-daemon` (`scripts/meum-helper.sh`): meum starts the daemon with itself, restarts it
-  when it dies and stops it on quit, and the daemon keeps Tama's state in meum's data folder for the
-  widget. Once the state is there, `scripts/ensure-running.sh` no longer starts a daemon from cmux
-  terminals. A helper waits for a daemon that already runs on the same state instead of doubling it.
+  `bin/tamago-daemon`: the daemon compiled by Bun into one signed executable, so the Mac that runs
+  it needs no Node. meum starts it with itself, restarts it when it dies and stops it on quit, and
+  the daemon keeps Tama's state in meum's data folder for the widget. Once the state is there,
+  `scripts/ensure-running.sh` no longer starts a daemon from cmux terminals. A helper waits for a
+  daemon that already runs on the same state instead of doubling it.
+  - In meum's collapsed sidebar (a 60 pt rail) Tama shows alone at 7 pt, with a dot while it has
+    something to say; hovering the dot shows the bubble. `scripts/render-pet.sh --rail` draws every
+    species that way, and `meum widget send <tab> '{"look": "rail"}'` shows it in a widget tab.
+  - A release: `scripts/build-meum-widget.sh --stage <dir> --version <v>`, then meum's
+    `scripts/release-widget.sh --folder <dir>/TamagoMeum.meumwidget <v> "<description>"` (add
+    `--publish` to put it in the widget library).
 - `daemon/meum.mjs` lets the daemon watch meum instead of cmux: it maps `meum tree` onto the
   snapshot shape the daemon knows from cmux, and reads meum's agent hook events, which name each
   session's transcript and prompt. While meum runs, the daemon watches it; the cmux-only work
