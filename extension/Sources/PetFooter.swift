@@ -15,7 +15,7 @@ struct PetFooter: View {
     /// Shows the workspace a remark is about (meum: `host.selectWorkspace`); nil leaves "re:" plain.
     var openWorkspace: ((String) -> Void)?
     /// meum's collapsed sidebar, a rail about 60 pt wide: Tama alone in a small font, and a dot while
-    /// it has something to say, which shows the bubble on hover.
+    /// it has something to say, which shows the bubble on hover; a click marks it read.
     var collapsed = false
     @State private var renaming = false
     @State private var hoveringAbout = false
@@ -64,7 +64,7 @@ struct PetFooter: View {
         let pet = Pet(state: model.daemon, now: now)
         let bubble = model.daemon?.bubble
         let age = bubble.map { seconds - $0.at / 1000 } ?? .infinity
-        let saying = bubble.map { $0.at > 0 } == true && age < Pet.showSeconds
+        let saying = bubble.map { $0.at > 0 && $0.at != model.readBubbleAt } == true && age < Pet.showSeconds
         return VStack(spacing: 4) {
             Circle()
                 .fill(Color(hex: "#E0AF68")!)
@@ -73,6 +73,13 @@ struct PetFooter: View {
                 .frame(width: 24, height: 14)
                 .contentShape(Rectangle())
                 .onHover { inside in hoveringDot = inside && saying; updateSpeech() }
+                .onTapGesture {
+                    guard saying, let bubble else { return }
+                    model.readBubbleAt = bubble.at
+                    hoveringDot = false
+                    hoveringSpeech = false
+                    speechShown = false
+                }
                 .popover(isPresented: $speechShown, arrowEdge: .trailing) {
                     if let bubble {
                         speech(bubble, age: age)

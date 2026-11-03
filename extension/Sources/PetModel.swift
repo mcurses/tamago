@@ -7,6 +7,8 @@ import SwiftUI
 class PetModel: ObservableObject {
     @Published private(set) var daemon: DaemonState?
     @Published private(set) var daemonOnline = false
+    /// The remark (its `at`) last marked read by a click on the collapsed sidebar's dot.
+    @Published var readBubbleAt: Double?
     /// No polling while nobody can see Tama (the meum widget sets this from its visibility).
     var paused = false
 
