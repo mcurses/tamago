@@ -1181,9 +1181,10 @@ if (args[0] === "--peek") {
 }
 
 if (args[0] === "--compare") {
-  // Replays Tama's last N turn comments with the current prompt on Haiku and on Sonnet, next to
-  // what it actually said then, into build/compare.md.
+  // Replays Tama's last N turn comments with the current prompt on the given models (default Haiku
+  // and Sonnet), next to what it actually said then, into build/compare.md: --compare [N] [model…]
   const n = Number(args[1]) || 8;
+  const models = args.slice(2).length ? args.slice(2) : ["haiku", "sonnet"];
   const snap = await snapshot();
   const picked = history.filter((h) => h.kind === "turn").slice(-n * 3);
   const rows = [];
@@ -1203,18 +1204,18 @@ if (args[0] === "--compare") {
     replayAt = h.at;
     const felt = turnTags(best.d).map((tag) => ({ tag, weight: character().likes[tag] ?? 0 })).filter((f) => f.weight);
     const event = { kind: "turn", w, detail: turnDetail(w, best.d, w, felt) };
-    const [haiku, sonnet] = await Promise.all(["haiku", "sonnet"].map((model) => brain(event, { model, now: h.at })));
+    const said = await Promise.all(models.map((model) => brain(event, { model, now: h.at })));
     const line = (r) => (r ? `${r.action ? `*${r.action}* ` : ""}${r.text}` : "(stays quiet: would repeat itself)");
-    rows.push({ h, haiku: line(haiku), sonnet: line(sonnet), prompt: best.d.prompt });
+    rows.push({ h, said: said.map(line), prompt: best.d.prompt });
     console.error(`replayed ${rows.length}/${n}: ${h.about}`);
   }
   const when = (at) => new Date(at).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" });
   const md = [`# Tama: before and after (${new Date().toLocaleString("en-GB")})`, "",
-    "Each row is a real turn Tama commented on. **Before** is what it actually said then (Haiku, old prompt). **Haiku** and **Sonnet** are the current prompt replayed on the same turn.", "",
+    `Each row is a real turn Tama commented on. **Before** is what it actually said then. ${models.map((m) => `**${m}**`).join(", ")}: the current prompt replayed on the same turn.`, "",
     ...rows.flatMap((r) => [
       `## ${when(r.h.at)}, ${r.h.about}`, "",
       `> ${short(r.prompt ?? "(no prompt)", 220)}`, "",
-      `- **Before:** ${line0(r.h)}`, `- **Haiku:** ${r.haiku}`, `- **Sonnet:** ${r.sonnet}`, ""]),
+      `- **Before:** ${line0(r.h)}`, ...models.map((m, i) => `- **${m}:** ${r.said[i]}`), ""]),
   ].join("\n");
   function line0(h) {
     return `${h.action ? `*${h.action}* ` : ""}${h.text}`;
