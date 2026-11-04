@@ -18,7 +18,7 @@ let package = Package(
             name: "TamagoMeum",
             dependencies: [.product(name: "MeumKit", package: "meum")],
             path: ".",
-            sources: ["Sources/Pet.swift", "Sources/PetModel.swift", "Sources/PetFooter.swift", "Sources/DaemonClient.swift", "Meum/TamagoWidget.swift"],
+            sources: ["Sources/Pet.swift", "Sources/PetModel.swift", "Sources/PetFooter.swift", "Sources/DaemonClient.swift", "Meum/TamagoWidget.swift", "Meum/SpeciesArt.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

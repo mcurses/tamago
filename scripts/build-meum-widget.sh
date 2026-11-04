@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Build Tama as a meum widget: the widget library (extension/Package.swift), species.json, and the
+# Build Tama as a meum widget: the widget library (extension/Package.swift, species art built in), and the
 # daemon compiled into one executable, bin/tamago-daemon, which meum runs as the widget's helper.
 # Needs a meum checkout for MeumKit and its build script (../meum next to this repo, or MEUM_REPO)
 # and Bun (https://bun.sh) to compile the daemon; the Mac that runs the widget needs neither.
@@ -30,9 +30,10 @@ WIDGETS=${STAGE:-${MEUM_WIDGETS_DIR:-$HOME/.local/share/meum/widgets}}
 DEST=$WIDGETS/TamagoMeum.meumwidget
 [[ -n $VERSION ]] || VERSION=$(git -C $ROOT describe --tags --always --dirty 2>/dev/null || print dev)
 
-# species.json first, so a reload that happens before the copy can't find it missing.
+# The species art goes into the library (meum loads a copy of it from a temporary folder).
+$ROOT/scripts/gen-species-swift.sh
 mkdir -p $DEST/bin
-cp $ROOT/sidebar/species.json $DEST/species.json
+rm -f $DEST/species.json
 rm -f $DEST/bin/tamago-daemon.new
 
 # The daemon as one executable. No .env or bunfig.toml from the working directory (meum's data folder).

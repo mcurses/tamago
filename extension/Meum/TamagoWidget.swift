@@ -8,18 +8,12 @@ import SwiftUI
 
 @_cdecl("meum_widget_main")
 public func meumWidgetMain() -> UnsafeMutableRawPointer {
-    // A widget library has no bundle of its own; scripts/build-meum-widget.sh puts species.json next to it.
-    Pet.speciesURL = besideLibrary("species.json")
+    // A widget library has no bundle of its own, and meum loads a copy of it from a temporary folder,
+    // so the species art is built in (extension/Meum/SpeciesArt.swift).
+    Pet.speciesData = Data(embeddedSpeciesJSON.utf8)
     return MeumWidgetRegistration(manifest: .init(id: "io.github.mcurses.tamago", displayName: "Tamago", version: "1")) { host in
         TamagoWidget(host: host)
     }.export()
-}
-
-/// A file in the folder this library was loaded from.
-private func besideLibrary(_ name: String) -> URL? {
-    var info = Dl_info()
-    guard dladdr(#dsohandle, &info) != 0, let file = info.dli_fname else { return nil }
-    return URL(fileURLWithPath: String(cString: file)).deletingLastPathComponent().appendingPathComponent(name)
 }
 
 /// What meum tells the widget about its card.
