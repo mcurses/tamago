@@ -164,16 +164,17 @@ function excerptOf(edit) {
 
 /**
  * Digest of the latest turn: { prompt, earlierPrompts, said, tools, errors, endedOnError, testFailed,
- * testPassed, commits, diffLines, durationMs, ended, lastTurnEndAt, turnsToday, files, excerpt,
- * commands, failures }. testPassed means the last test run of the turn passed; endedOnError that
- * its last tool call failed (errors on the way that the agent recovered from don't count). `until` (ms) reads the
- * transcript as it was then, to replay an older turn.
+ * testPassed, commits, diffLines, durationMs, ended, continued, lastTurnEndAt, turnsToday, files,
+ * excerpt, commands, failures }. testPassed means the last test run of the turn passed; endedOnError
+ * that its last tool call failed (errors on the way that the agent recovered from don't count);
+ * continued that no new prompt started the turn (the session went on by itself after its last turn
+ * ended). `until` (ms) reads the transcript as it was then, to replay an older turn.
  */
 export function digest(file, { until = Infinity } = {}) {
   const entries = readTurnTail(file).filter((e) => !e.timestamp || Date.parse(e.timestamp) <= until);
   let promptIdx = -1;
   const prompts = [];
-  let lastTurnEndAt = null;
+  const endIdx = [];
   let turnsToday = 0;
   const today = new Date().toDateString();
   entries.forEach((e, i) => {
@@ -183,11 +184,19 @@ export function digest(file, { until = Infinity } = {}) {
       prompts.push(p);
     }
     if (e.type === "system" && e.subtype === "turn_duration") {
-      lastTurnEndAt = e.timestamp;
+      endIdx.push(i);
       if (new Date(e.timestamp).toDateString() === today) turnsToday++;
     }
   });
-  const turn = promptIdx >= 0 ? entries.slice(promptIdx + 1).filter((e) => !e.isSidechain) : [];
+  // A turn runs from its prompt, or from the end of the turn before it: a session that wakes up by
+  // itself (a timer, a wait, a notification) ends a turn every time without anyone typing, and what
+  // it did two days ago must not be counted again at every wake.
+  const lastEnd = endIdx.at(-1) ?? -1;
+  const running = entries.slice(lastEnd + 1).some((e) => !e.isSidechain && (e.type === "assistant" || e.type === "user"));
+  const prevEnd = (running ? lastEnd : endIdx.at(-2)) ?? -1;
+  const continued = prevEnd > promptIdx;
+  const turn = promptIdx >= 0 ? entries.slice(Math.max(promptIdx, prevEnd) + 1).filter((e) => !e.isSidechain) : [];
+  const lastTurnEndAt = lastEnd >= 0 ? entries[lastEnd].timestamp : null;
   const tools = {};
   const errors = [];
   let endedOnError = false;
@@ -253,6 +262,7 @@ export function digest(file, { until = Infinity } = {}) {
     diffLines,
     durationMs,
     ended,
+    continued,
     lastTurnEndAt,
     turnsToday,
     files: files.slice(-6),

@@ -56,6 +56,40 @@ test("digest: a finished turn reports prompt, tools, said text and duration", ()
   assert.equal(d.turnsToday, 2);
 });
 
+test("digest: a turn that started by itself counts only what happened since the turn before", () => {
+  const file = writeTranscript("watcher.jsonl", [
+    user("keep an eye on the deploy"),
+    toolUse("Bash", { command: "git commit -m 'bookkeeping'" }),
+    toolUse("Bash", { command: "git commit -m 'more bookkeeping'" }),
+    said("Committed; now waiting."),
+    turnEnd(1000),
+    { type: "user", timestamp: now, message: { content: "<task-notification>timer fired</task-notification>" } },
+    toolUse("Monitor", {}),
+    said("Nothing new; waiting again."),
+    turnEnd(1800_000),
+  ]);
+  const d = digest(file);
+  assert.equal(d.prompt, "keep an eye on the deploy");
+  assert.equal(d.continued, true);
+  assert.equal(d.commits, 0);
+  assert.deepEqual(d.tools, { Monitor: 1 });
+  assert.equal(d.said, "Nothing new; waiting again.");
+  assert.equal(d.durationMs, 1800_000);
+  assert.equal(d.ended, true);
+  // Mid-turn after such a wake: still only the current stretch, and not ended yet.
+  const live = writeTranscript("watcher-live.jsonl", [
+    user("keep an eye on the deploy"),
+    toolUse("Bash", { command: "git commit -m 'bookkeeping'" }),
+    turnEnd(1000),
+    toolUse("Read", { file_path: "x" }),
+  ]);
+  const l = digest(live);
+  assert.equal(l.continued, true);
+  assert.equal(l.ended, false);
+  assert.equal(l.commits, 0);
+  assert.deepEqual(l.tools, { Read: 1 });
+});
+
 test("digest: an unfinished turn is not ended and has no duration", () => {
   const file = writeTranscript("running.jsonl", [user("still going"), toolUse("Read", { file_path: "x" })]);
   const d = digest(file);
