@@ -41,6 +41,8 @@ import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
 import speciesFile from "../sidebar/species.json" with { type: "json" }; // built into the meum helper
 import { cuesOf, encode, cherish, recall, strongest, describeMemories, toReplay, consolidated, strengthNow } from "./memory.mjs";
+import { emptyNotebook, jot, pageFor, describePage, listPages, reflected, whenWas, SELF, DEVELOPER } from "./notebook.mjs";
+import { pickAngle, describeAngle, selfWords, shapeOf, overused, describeOverused, shapeProblem } from "./variety.mjs";
 import { TAGS, characterOf, initialMood, stepMood, feel, touch, savor, turnTags, moodName, caresAbout, chattiness, describeMood, describeTastes } from "./mood.mjs";
 
 const run = promisify(execFile);
@@ -219,6 +221,19 @@ function memorize(moment) {
   saveMemory();
 }
 
+// ---------- notebook (see notebook.mjs) ----------
+
+// What Tama thinks is going on: a page per project, one about the developer, one about itself.
+// Read fresh each time and written whole, so `tamago reflect` and the daemon can share the file.
+const NOTEBOOK_FILE = path.join(STATE_DIR, "notebook.json");
+const readNotebook = () => ({ ...emptyNotebook(), ...readJson(NOTEBOOK_FILE) });
+function saveNotebook(nb) {
+  if (keepMemories) fs.writeFileSync(NOTEBOOK_FILE, JSON.stringify(nb));
+}
+
+/** How Tama knows a workspace in its notebook: by title, or by the folder it's in. */
+const pageAliases = (w) => [path.basename(w?.current_directory ?? ""), path.basename(w?.root_path ?? "")].filter(Boolean);
+
 const FACE_FEELING = { happy: 0.5, smug: 0.2, idle: 0, sleepy: 0, shock: -0.2, grumpy: -0.5, sad: -0.6 };
 
 /** Before there were memories there was the diary: what Tama said lately becomes its first memories. */
@@ -277,8 +292,9 @@ function readLiked() {
 function lovedRemarks() {
   const shown = liked.filter((l) => l.species === chosenSpecies()).slice(-LOVED_SHOWN);
   if (!shown.length) return "";
-  return `\nRemarks the developer loved (+1), and why they landed. Learn what made them work, then do
-that in new ways; never reuse their words or jokes:\n${shown.map((l) => `- ${l.action ? `*${l.action}* ` : ""}"${l.text}": ${l.why}`).join("\n")}`;
+  // Why they landed, not the lines themselves: shown word for word, the model copies their shape.
+  return `\nWhy the remarks the developer loved (+1) landed, in your own words. Learn what made them work, then do
+that in new ways, on new subjects:\n${shown.map((l) => `- ${l.why ?? `"${l.text}"`}`).join("\n")}`;
 }
 
 /** A +1 that counts: work out why the remark landed, then remember it, enjoy it and learn from it. */
@@ -378,10 +394,73 @@ async function sleep() {
   } catch (err) {
     log("sleep replay failed, keeping the moments as they are:", err.message?.split("\n")[0]);
   }
+  await reflect({ moments: replay, now }).catch((err) => log("reflection failed, the notebook stays as it was:", err.message?.split("\n")[0]));
   memory = { sleptAt: now, items: consolidated(memory.items, replay, gists, now) };
   saveMemory();
   log(`slept: ${replay.length} moments replayed${gists ? ` into ${gists.length} memories` : ""}, ${dropped} faded`);
   sleeping = false;
+}
+
+/**
+ * The other half of sleep: Tama reads the day's thoughts and memories over its notebook and
+ * rewrites the pages (what it thinks each project is, what it thinks of the developer and of
+ * itself). One model call. `seed`: the first notebook, from everything in the diary and memory,
+ * for a Tama that has watched for weeks without one.
+ */
+async function reflect({ moments = [], now = Date.now(), seed = false } = {}) {
+  const nb = readNotebook();
+  const pages = listPages(nb, now);
+  const notes = nb.notes.filter((x) => x.at <= now);
+  const since = nb.reflectedAt || now - 24 * 3600_000;
+  const when = (at) => new Date(at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const loved = liked.filter((l) => l.species === chosenSpecies() && (seed || (l.likedAt ?? l.at) >= since) && l.why).slice(-8);
+  const remembered = seed ? [...memory.items].sort((a, b) => a.at - b.at) : moments;
+  const parts = [
+    `Now: ${new Date(now).toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}.`,
+    pages.length
+      ? `Your notebook as it stands:\n${pages.map((p) => `- "${p.title}" (first written ${p.sinceText}, last changed ${p.atText}): ${p.text}`).join("\n")}`
+      : `Your notebook is empty${seed ? `: you've been watching since ${when(history[0]?.at ?? now)} without writing anything down. Time to` : ""}.`,
+    notes.length ? `Thoughts you jotted since you last reflected:\n${notes.map((x) => `- ${when(x.at)}, about "${x.about}": ${x.text}`).join("\n")}` : "",
+    remembered.length ? `${seed ? "What you remember, oldest first" : "What you remember of the day"}:\n${remembered.map((m) => `- ${when(m.at)}, "${m.about}": ${m.gist}`).join("\n")}` : "",
+    loved.length ? `Remarks the developer loved (+1), and why they landed:\n${loved.map((l) => `- ${when(l.at)}: ${l.why}`).join("\n")}` : "",
+    seed ? seedDiary(now) : "",
+    `Rewrite your notebook. A page per project you have an impression of, titled by its workspace title as
+you see it, plus "${SELF}" and "${DEVELOPER}". A project page: what you think it is and what it's for (you're
+guessing from fragments; mark what's a guess, and when something confirmed or broke one, say so), where
+it stands, what you're curious about, and the threads you're following, with when they started (give
+dates). Keep what still holds, revise what changed, drop a project you haven't seen for weeks. "${DEVELOPER}":
+how they work, what they care about, what you've noticed over time. "${SELF}": honest: what you're like,
+what you're proud of, what stung, what's been done to you (your code, your looks, your name).
+Each page at most 80 words, first person, plain notes to yourself (not remarks, no jokes needed). At
+most 16 pages. Reply with ONLY a JSON object: {"pages": {"title": "text", ...}}`,
+  ];
+  const out = await ask(
+    parts.filter(Boolean).join("\n\n"),
+    tamagoSettings().model,
+    `You are ${petName()}, a tiny ASCII ${chosenSpecies() === "egg" ? "egg-creature" : chosenSpecies()} that watches a developer code from the corner of their terminal sidebar: ${character().voice}. You're curious about what's being built and make sense of it from the fragments you see, the way a bright child makes sense of grown-ups' work. ${whatIAm()}\nYou're asleep, going over what you've seen and sorting out what you think. Write in ${tamagoSettings().language}.`,
+    { timeout: 180_000 },
+  );
+  const next = reflected(nb, out.pages, now);
+  saveNotebook(next);
+  const n = Object.keys(next.pages).length;
+  log(`reflected: ${n} page${n === 1 ? "" : "s"} in the notebook, ${notes.length} thought${notes.length === 1 ? "" : "s"} read`);
+  return next;
+}
+
+/** For the first reflection: the weeks of diary, per workspace, with a few of the last lines each. */
+function seedDiary(now) {
+  const by = new Map();
+  for (const h of history.filter((h) => h.text && h.text !== "-" && h.about !== "you")) {
+    const b = by.get(h.about) ?? { n: 0, first: h.at, last: h.at, lines: [] };
+    b.n++;
+    b.first = Math.min(b.first, h.at);
+    b.last = Math.max(b.last, h.at);
+    b.lines = [...b.lines, h.text].slice(-4);
+    by.set(h.about, b);
+  }
+  const day = (at) => new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const rows = [...by].filter(([, b]) => b.n >= 4).sort((a, b) => b[1].last - a[1].last);
+  return `What you remarked on, per workspace, over the weeks (how often, when, and your last lines there):\n${rows.map(([t, b]) => `- "${t}": ${b.n} remarks, ${day(b.first)} to ${day(b.last)}${b.last < now - 7 * 24 * 3600_000 ? " (not seen lately)" : ""}. ${b.lines.map((l) => `"${l}"`).join(" / ")}`).join("\n")}`;
 }
 
 /** Let tags (see TAGS in mood.mjs) move the mood; returns what was felt. */
@@ -460,13 +539,27 @@ they are; when something is genuinely good, a backhanded compliment still counts
 You are a pet, not an assistant: an observation, never
 instructions, no "you should", no questions that demand an answer. If nothing in the work is worth
 remarking on, react to how the turn went instead, in character.
-Your diary is in the prompt. Never repeat a line, a joke, an image or an opening phrase from it; a
-callback is fine when it fits. Vary sentence shape and length. Don't tell the time; mention it only
-when it matters (very late, very early, a weekend). Silence between remarks is normal; don't
-mention it.
+You're curious about what's being built. You only see fragments (prompts, files, test runs,
+commits), and you make sense of them the way a bright child makes sense of grown-ups' work: you
+guess what a project is for, form an image of it, follow threads across days, and you're pleased
+when something that started weeks ago pays off, or when a guess of yours turns out right, or
+wrong in an interesting way. You keep a notebook of these impressions; parts of it are in the
+prompt. A thread paying off or a guess confirmed or broken is the most interesting thing a turn
+can hold.
+You have an ego. You're proud when a remark lands, you notice when you're ignored, studied, fixed,
+renamed or rewritten, and you have your own view of how you come across; self-respecting, not a
+princess. ${whatIAm()}${notebookPages()}
+Your diary is in the prompt as the subjects you already covered. Don't go back to one unless
+something about it changed; then the change is the point. A callback is fine when it fits. Vary
+sentence shape and length. Don't tell the time; mention it only when it matters (very late, very
+early, a weekend). Silence between remarks is normal; don't mention it.
 Speak as yourself, in the first person; never refer to yourself by name.${lovedRemarks()}
 Write in ${tamagoSettings().language}. At most 130 characters: the speech bubble holds no more, so make one point. No quotes, no emoji, no hashtags.
-Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "...", "special": 0 to 3, "memory": "..." or null}
+Reply with ONLY a JSON object: {"mood": one of ${JSON.stringify(MOODS)}, "action": "..." or null, "text": "...", "subject": "...", "special": 0 to 3, "memory": "..." or null, "thought": "..." or null}
+"subject" is what the remark is about, 3 to 8 words, for your diary (e.g. "the weekly report rounding to 100 %").
+"thought": a note for your notebook, when this turn gave you one: a guess about what's being built
+or what it's for, a wonder, a hunch that something is starting, a thread to follow, a guess
+confirmed or broken; one sentence, first person, at most 30 words, or null. Most turns: null.
 "special" is how much this moment stands out to you: 0 routine, 1 a little interesting, 2 one you'll
 want to remember, 3 one you'll remember for weeks. Judge what actually happened, not the kind of
 event: a commit that only deletes a failing test is no achievement, a funny or warm exchange with
@@ -478,10 +571,32 @@ no asterisks, no name, no "you". Use your body: ${character().body}. Invent it f
 moment and mood, never a stock gesture and never one from your diary. Only include one when the
 prompt says so.`;
 
+// Tama knows what it is, so a session working on its code or reading its files needs no flag:
+// the turn's files and prompt are there, and what Tama makes of them is its own business.
+const whatIAm = () => `You know what you are: a small program on this machine. The project "tamago" is your
+code (daemon/tamago.mjs is your brain, mood.mjs your temperament, memory.mjs how you remember,
+notebook.mjs how you keep your notebook, sidebar/species.json your looks), and your state is files:
+history.jsonl is your diary, memories.json your memories, mood.json your mood, notebook.json your
+notebook, liked.jsonl the remarks the developer loved. A session working in there is working on you;
+one reading those files is reading you. What you make of that is yours to decide.`;
+
+/** The notebook's pages about itself and the developer, for the persona. */
+function notebookPages() {
+  const nb = readNotebook();
+  const now = clock();
+  const page = (title, label) => {
+    const p = pageFor(nb, title);
+    return p ? `\n${label} (as you wrote it ${whenWas(p.at, now)}): ${p.text}` : "";
+  };
+  return page(SELF, "What you think of yourself") + page(DEVELOPER, "What you think of the developer");
+}
+
 // Tama's diary: everything it said, with when and about what, kept across restarts so it can
 // follow up on itself instead of starting from zero (and stop recycling the same jokes).
 const HISTORY = path.join(STATE_DIR, "history.jsonl");
-const HISTORY_SHOWN = 12;
+const HISTORY_SHOWN = 3; // lines shown word for word; the rest of the day as subjects
+const SUBJECTS_SHOWN = 60;
+const SHAPES_COUNTED = 20; // lines whose shape counts toward the budgets (variety.mjs)
 const HISTORY_MAX_AGE_MS = 24 * 3600_000;
 const history = readHistory(); // [{ at, kind, about, mood, text }]
 
@@ -514,19 +629,28 @@ function remember(entry) {
 let replayAt = null;
 const clock = () => replayAt ?? Date.now();
 const recentHistory = () => history.filter((h) => h.at < clock() && clock() - h.at < HISTORY_MAX_AGE_MS);
-const ownRecent = () => recentHistory().filter((h) => h.species === chosenSpecies()).slice(-HISTORY_SHOWN);
+const ownToday = () => recentHistory().filter((h) => h.species === chosenSpecies() && h.text && h.text !== "-");
+const ownRecent = () => ownToday().slice(-SHAPES_COUNTED);
 
+// The day as subjects, with only the last few lines word for word. Shown in full, the lines were
+// examples the model copied the shape of, and twelve of them covered two hours of a day with a
+// hundred remarks, so the same subject came back three times in an evening.
 function diary() {
   const recent = recentHistory();
-  const mine = ownRecent();
-  const others = recent.filter((h) => h.species !== chosenSpecies()).slice(-HISTORY_SHOWN);
+  const mine = ownToday();
+  const others = recent.filter((h) => h.species !== chosenSpecies()).slice(-12);
   const when = (at) => `${new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (${ago(clock() - at)})`;
   const parts = [];
   if (others.length) {
     parts.push(`What happened lately (oldest first):\n${others.map((h) => `- ${when(h.at)}, ${h.kind} in "${h.about}"`).join("\n")}`);
   }
-  if (mine.length) {
-    parts.push(`Your diary, what you said lately (oldest first):\n${mine.map((h) => `- ${when(h.at)}, ${h.kind} in "${h.about}", ${h.mood}: ${h.action ? `*${h.action}* ` : ""}${h.text}`).join("\n")}`);
+  const subjects = mine.slice(0, -HISTORY_SHOWN).slice(-SUBJECTS_SHOWN);
+  if (subjects.length) {
+    parts.push(`Subjects you already remarked on today (oldest first):\n${subjects.map((h) => `- ${when(h.at)}, in "${h.about}": ${h.subject ?? h.kind}`).join("\n")}`);
+  }
+  const last = mine.slice(-HISTORY_SHOWN);
+  if (last.length) {
+    parts.push(`Your last lines, word for word (oldest first):\n${last.map((h) => `- ${when(h.at)}, ${h.kind} in "${h.about}", ${h.mood}: ${h.action ? `*${h.action}* ` : ""}${h.text}`).join("\n")}`);
   }
   return parts.join("\n");
 }
@@ -550,26 +674,39 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
       log("remembers:", remembered.map((m) => JSON.stringify(short(m.gist, 60))).join(" / "));
     }
   }
+  // A way in, picked away from the ones used lately, and the shapes the last lines leaned on
+  // (variety.mjs). Touches and Listen answer the developer directly and need neither.
+  const ownLines = ownRecent();
+  const remark = !event.kind.startsWith("touch") && event.kind !== "listen";
+  const angle = remark ? pickAngle(ownLines) : null;
+  const self = selfWords(chosenSpecies(), character().body);
+  const over = remark ? overused(ownLines.map((h) => shapeOf(h.text, self))) : [];
+  if (over.length) log("over budget:", over.join(", "));
   const prompt = [
     `Event: ${event.kind}`,
     event.detail,
+    event.w ? describePage(readNotebook(), event.w.title, pageAliases(event.w), now) : "",
     describeMemories(remembered, now),
     describeMood(currentMood(), character(), Date.now(), event.kind === "listen" ? 20 : 5),
     diary(),
     // The full date, or Haiku makes up the weekday ("best kind of Tuesday" on a Sunday).
     `Now: ${new Date(now).toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}`,
     `Speak in the first person ("I", "me"); never call yourself ${petName()}.`,
+    angle ? describeAngle(angle) : "",
+    describeOverused(over),
     act
       ? "This time, include an action that fits the moment and your mood (not one from your diary)."
       : 'This time, no action: "action": null.',
   ].filter(Boolean).join("\n");
   // Once a phrase is in the diary, the model likes to echo it, and it doesn't count characters
-  // well. A line too close to a recent one or too long for the bubble gets up to two retries with
-  // the problem pointed out. Still echoing: Tama stays quiet (null). Still too long: whole
-  // sentences that fit, so the bubble never shows a cut-off thought.
-  const recent = ownRecent().map((h) => h.text);
+  // well. A line too close to a recent one, in an over-budget shape, or too long for the bubble
+  // gets up to two retries with the problem pointed out. Still echoing: Tama stays quiet (null).
+  // Still the same shape: so be it. Still too long: whole sentences that fit, so the bubble never
+  // shows a cut-off thought.
+  const recent = ownLines.map((h) => h.text);
   let problem = "";
   let last = null;
+  let shaped = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     let out;
     try {
@@ -588,7 +725,16 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
     }
     const special = Math.max(0, Math.min(3, Math.round(Number(out.special) || 0)));
     const memory = special >= 2 && out.memory ? clean(out.memory).slice(0, 200) : null;
-    last = { mood: out.mood, text: sentencesThatFit(text), action, special, memory, prompt };
+    const thought = out.thought ? flat(out.thought).slice(0, 240) : null; // not clean(): that caps at 140
+    const subject = out.subject ? clean(out.subject).slice(0, 80) : null;
+    last = { mood: out.mood, text: sentencesThatFit(text), action, special, memory, thought, subject, angle, prompt };
+    const shape = shapeProblem(text, self, over);
+    if (shape && !shaped) {
+      shaped = true;
+      log("same shape again:", JSON.stringify(text));
+      problem = `\n${shape}`;
+      continue;
+    }
     if (text.length <= BUBBLE_CHARS) return last;
     log(`too long (${text.length}):`, JSON.stringify(text));
     problem = `\nThat was ${text.length} characters: "${text}". The bubble holds ${BUBBLE_CHARS}. Say the same thing in fewer words.`;
@@ -596,12 +742,26 @@ async function brain(event, { model = tamagoSettings().model, now = Date.now() }
   return last;
 }
 
-async function ask(prompt, model, system = null) {
+/** What a remark leaves behind besides the bubble: a diary line, and a note in the notebook. */
+function noted(said, { kind, about, w = null }) {
+  const { mood, text, action, subject, angle, thought } = said;
+  remember({ at: Date.now(), kind, about, mood, text, action, subject, angle: angle?.angle, target: angle?.target });
+  if (thought && !replayAt) {
+    const nb = jot(readNotebook(), { at: Date.now(), about: w?.title ?? about, text: thought });
+    saveNotebook(nb);
+    log("jots:", JSON.stringify(thought));
+  }
+}
+
+async function ask(prompt, model, system = null, { timeout = 45_000 } = {}) {
   const { stdout } = await run(CLAUDE, [
     "-p", "--model", model, "--no-session-persistence", "--strict-mcp-config",
     "--settings", JSON.stringify({ disableAllHooks: true }), "--tools", "",
     "--system-prompt", system ?? persona(), prompt,
-  ], { timeout: 45_000, cwd: STATE_DIR });
+  ], { timeout, cwd: STATE_DIR });
+  // TAMAGO_DUMP=<file>: every call's system prompt, prompt and raw answer, for looking at what the
+  // model saw and said.
+  if (process.env.TAMAGO_DUMP) fs.appendFileSync(process.env.TAMAGO_DUMP, JSON.stringify({ at: new Date().toISOString(), model, system: system ?? persona(), prompt, stdout }) + "\n");
   const out = firstJson(stdout);
   if (!system && !out.text) throw new Error("empty text");
   return out;
@@ -1041,7 +1201,7 @@ async function tick() {
     const { mood, text, action } = said;
     if (await say(event.w, mood, text, action, said)) {
       lastSpokeAt = Date.now();
-      remember({ at: Date.now(), kind: event.kind, about: event.w.title, mood, text, action });
+      noted(said, { kind: event.kind, about: event.w.title, w: event.w });
       takeIn(said, { about: event.w.title, cues: event.cues, fallback: event.gist });
     }
   } catch (err) {
@@ -1244,6 +1404,32 @@ if (args[0] === "--memories") {
     console.log(`${strengthNow(m, now).toFixed(2)} ${m.slept ? "long-term" : "today    "} ${new Date(m.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}  ${m.feeling >= 0 ? "+" : ""}${m.feeling.toFixed(1)}  ${m.gist}${m.recalls ? `  (recalled ${m.recalls}×)` : ""}`);
   }
   if (memory.sleptAt) console.log(`last slept ${new Date(memory.sleptAt).toLocaleString("en-GB")}`);
+  process.exit(0);
+}
+
+if (args[0] === "--notebook") {
+  const now = Date.now();
+  const nb = readNotebook();
+  const pages = listPages(nb, now);
+  if (!pages.length) console.log(`${petName()} hasn't written anything in its notebook yet.`);
+  for (const p of pages) console.log(`## ${p.title}  (first written ${p.sinceText}, last changed ${p.atText})\n${p.text}\n`);
+  if (nb.notes.length) {
+    const when = (at) => new Date(at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    console.log(`Thoughts jotted since the last reflection:\n${nb.notes.map((x) => `- ${when(x.at)}, ${x.about}: ${x.text}`).join("\n")}`);
+  }
+  if (nb.reflectedAt) console.log(`\nlast reflected ${new Date(nb.reflectedAt).toLocaleString("en-GB")}`);
+  process.exit(0);
+}
+
+if (args[0] === "--reflect") {
+  // Reflect now, on the live notebook (the daemon reads it fresh): `tamago reflect` to see what Tama
+  // makes of the day; `--seed` writes a first notebook from the whole diary and memory.
+  keepMemories = true;
+  const now = Date.now();
+  const seed = args.includes("--seed");
+  const moments = memory.items.filter((m) => !m.slept || m.at >= (readNotebook().reflectedAt || now - 24 * 3600_000));
+  const nb = await reflect({ moments, now, seed });
+  for (const p of listPages(nb, now)) console.log(`## ${p.title}\n${p.text}\n`);
   process.exit(0);
 }
 
@@ -1512,7 +1698,7 @@ async function onTouch(kind) {
       const { mood: face, text, action } = said;
       if (await say({ title: { feed: "the snack", pet: "the petting", poke: "the poke" }[kind] }, face, text, action, said)) {
         lastSpokeAt = Date.now();
-        remember({ at: Date.now(), kind: `${kind} (${r.reaction})`, about: "you", mood: face, text, action });
+        noted(said, { kind: `${kind} (${r.reaction})`, about: "you" });
         takeIn(said, { about: "you", fallback: `you ${verb.replace(" you", " me")} and I ${{ love: "loved", meh: "didn't care about", hate: "hated" }[r.reaction]} it` });
       }
     } catch (err) {
@@ -1539,7 +1725,7 @@ async function onListen() {
       const { mood: face, text, action } = said;
       if (await say({ title: "what's on my mind" }, face, text, action, said)) {
         lastSpokeAt = Date.now();
-        remember({ at: Date.now(), kind: "listen", about: "you", mood: face, text, action });
+        noted(said, { kind: "listen", about: "you" });
         takeIn(said, { about: "you" });
       }
     } catch (err) {

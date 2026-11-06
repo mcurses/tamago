@@ -231,6 +231,41 @@ Brain?](https://www.youtube.com/watch?v=PqtggjVAi8M):
 
 `tamago memories` lists them with their strength.
 
+## Notebook
+
+Besides what it feels (mood) and what happened (memory), Tama keeps what it *thinks is going on*: a
+notebook (`daemon/notebook.mjs`) with a page per project it has formed an impression of, one about
+you and one about itself, all in its own words. It only ever sees fragments (prompts, files, test
+runs, commits), so it makes sense of them the way a bright child makes sense of grown-ups' work:
+it guesses what a project is for, follows threads across days, and is pleased when something that
+started weeks ago pays off, or when a guess turns out right, or wrong in an interesting way.
+
+- **Jotting.** Along with a remark, Tama may note a thought: a guess, a wonder, a hunch that
+  something is starting. Most turns leave none.
+- **Reflecting.** When it sleeps, it also reads the day's thoughts and memories over its notebook
+  and rewrites the pages: guesses that held up become what it knows, wrong ones go or get laughed
+  off, threads get followed, projects it hasn't seen in weeks are dropped. That's one more model
+  call per sleep. The page about itself is rewritten the same way, from what got a +1, what got
+  ignored, what was done to its code or looks, so its self-image has a history: it can be proud of
+  a good week and touchy for a day.
+- **Reading.** The page for the workspace a remark is about, with the latest thoughts jotted about
+  it, goes into the prompt, and the pages about you and about itself are part of its character.
+
+Nothing in the code decides what Tama should think about a project, or when it's working on itself
+(it knows which project is its code and which files are its diary, memories and notebook; what it
+makes of a session in there is its own business). In the first week the notebook is thin, so it
+guesses wildly from scraps; by week three it connects things across days.
+
+`tamago notebook` prints it; `tamago reflect` makes Tama rewrite it now, and `tamago reflect --seed`
+writes a first notebook from the weeks of diary and memory a Tama already has.
+
+Tama also keeps its remarks from settling into one shape (`daemon/variety.mjs`): each remark is
+handed a way in (deadpan, understatement, a confident guess, a callback, …) picked away from the
+ones used lately; a few shapes (opening with a count, a joke about its own body, ending on "!") are
+budgeted at about one line in five rather than banned, since they're its catchphrases; and its diary
+goes into the prompt as the subjects already covered today rather than the lines themselves, which
+it would copy. Why: [docs/research/2026-11-06-keeping-remarks-fresh.md](docs/research/2026-11-06-keeping-remarks-fresh.md).
+
 ## Development
 
 ### From a checkout
