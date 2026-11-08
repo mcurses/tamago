@@ -18,6 +18,12 @@ struct DaemonState: Decodable, Equatable, Sendable {
         var likedAt: Double? // epoch milliseconds of the last +1 click, given or taken back
     }
 
+    /// A remark on its way: the model is writing one. Shown as three dots in place of the bubble.
+    struct Thinking: Decodable, Equatable, Sendable {
+        var since: Double // epoch milliseconds
+        var about: String? // the workspace it will be about, if known
+    }
+
     /// Per-workspace details the stock sidebar shows (daemon/details.mjs). Optional, so an older
     /// daemon still decodes.
     struct Workspace: Decodable, Equatable, Sendable {
@@ -118,7 +124,8 @@ struct DaemonState: Decodable, Equatable, Sendable {
 
     var pet: Pet
     var bubble: Bubble
-    var mood: Mood? // optional: older daemons don't send these
+    var thinking: Thinking? // optional: older daemons don't send these
+    var mood: Mood?
     var reaction: Reaction?
     var settings: Settings?
     var tamagoSettings: TamagoSettings?

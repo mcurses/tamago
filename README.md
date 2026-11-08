@@ -57,6 +57,8 @@ short call per remark; how often depends on **Talk**, below). What it sends is d
   robot hates slow turns and loves green tests, the penguin is scandalized by giant diffs, the
   ghost adores failing things at 3 a.m.), and its eyes show its mood. Now and then it also does
   something, like `*rattles spines at the sidebar*`.
+- **Dots while it thinks.** When a remark is on its way, the last one makes room for three dots,
+  one lit after the other, until the new line arrives.
 - **+1.** A faint +1 sits in the corner of every speech bubble. Click it when a remark lands; click
   again within a moment to take it back. Tama works out with the model what made that remark good
   (the timing, the joke, who it teased), keeps it as a memory that lasts weeks, is pleased about

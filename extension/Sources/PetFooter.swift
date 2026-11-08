@@ -40,6 +40,8 @@ struct PetFooter: View {
         // this every second, which switches back to the cheap schedule afterwards.
         if reacting(at: .now) {
             TimelineView(.animation(minimumInterval: 1 / 30)) { footer(at: $0.date) }
+        } else if model.daemon?.thinking != nil {
+            TimelineView(.periodic(from: .now, by: Self.dotSeconds)) { footer(at: $0.date) }
         } else {
             TimelineView(.periodic(from: .now, by: 1)) { footer(at: $0.date) }
         }
@@ -63,8 +65,9 @@ struct PetFooter: View {
         let seconds = now.timeIntervalSince1970
         let pet = Pet(state: model.daemon, now: now)
         let bubble = model.daemon?.bubble
+        let thinking = model.daemon?.thinking
         let age = bubble.map { seconds - $0.at / 1000 } ?? .infinity
-        let saying = bubble.map { $0.at > 0 && $0.at != model.readBubbleAt } == true && age < Pet.showSeconds
+        let saying = thinking != nil || (bubble.map { $0.at > 0 && $0.at != model.readBubbleAt } == true && age < Pet.showSeconds)
         return VStack(spacing: 4) {
             Circle()
                 .fill(Color(hex: "#E0AF68")!)
@@ -81,7 +84,12 @@ struct PetFooter: View {
                     speechShown = false
                 }
                 .popover(isPresented: $speechShown, arrowEdge: .trailing) {
-                    if let bubble {
+                    if let thinking {
+                        musing(thinking, seconds: seconds)
+                            .frame(width: 240)
+                            .padding(8)
+                            .onHover { inside in hoveringSpeech = inside; updateSpeech() }
+                    } else if let bubble {
                         speech(bubble, age: age)
                             .frame(width: 240)
                             .padding(8)
@@ -114,7 +122,10 @@ struct PetFooter: View {
         let seconds = now.timeIntervalSince1970
         let pet = Pet(state: model.daemon, now: now)
         return VStack(spacing: 4) {
-            if let bubble = model.daemon?.bubble, bubble.at > 0 {
+            if let thinking = model.daemon?.thinking {
+                // A remark on its way replaces the last one with three dots.
+                musing(thinking, seconds: seconds)
+            } else if let bubble = model.daemon?.bubble, bubble.at > 0 {
                 let age = seconds - bubble.at / 1000
                 // A fresh +1 keeps the bubble up a moment longer, to take it back.
                 let clicked = bubble.likedAt.map { seconds - $0 / 1000 < 2 } ?? false
@@ -274,6 +285,32 @@ struct PetFooter: View {
                 // When it was said, like a message timestamp.
                 Text(ago(age)).font(.system(size: 9)).foregroundStyle(.tertiary).padding(.trailing, 4).padding(.top, 1)
             }
+        }
+    }
+
+    static let dotSeconds = 0.4 // one step of the three dots
+
+    /// The bubble while a remark is being written: three dots, one lit after the other.
+    private func musing(_ thinking: DaemonState.Thinking, seconds: Double) -> some View {
+        let step = Int((seconds - thinking.since / 1000) / Self.dotSeconds)
+        return VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                if let about = thinking.about, !about.isEmpty {
+                    Text("re: \(about)").font(.system(size: 9)).lineLimit(1).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 3) {
+                    ForEach(0..<3, id: \.self) { i in
+                        Text("●").font(.system(size: 9)).opacity(i == ((step % 3) + 3) % 3 ? 0.9 : 0.3)
+                    }
+                }
+                .padding(.vertical, 3)
+            }
+            .padding(7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#8A8A8A")!, lineWidth: 1))
+            Text("╲").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(hex: "#8A8A8A")!)
+                .frame(maxWidth: .infinity)
+                .offset(x: -4)
         }
     }
 

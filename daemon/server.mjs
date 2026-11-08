@@ -2,7 +2,7 @@
 // Sandbox, so it can neither read Tama's state files nor reach the cmux socket; it talks to this
 // server on 127.0.0.1 instead. Requests must carry the token baked into the extension at build time.
 //
-//   GET  /state   -> { pet, bubble, workspaces: { <id>: { color, description } } }
+//   GET  /state   -> { pet, bubble, thinking, workspaces: { <id>: { color, description } } }
 //   POST /action  { type, ... } -> { ok: true } | { ok: false, error }
 
 import http from "node:http";

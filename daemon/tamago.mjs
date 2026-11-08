@@ -660,7 +660,19 @@ function diary() {
 const ACTION_CHANCE = Number(process.env.TAMAGO_ACTION_CHANCE ?? 0.3);
 
 /** What Tama says about an event, or null if it would only repeat itself. `now` replays an older moment. */
-async function brain(event, { model = tamagoSettings().model, now = Date.now() } = {}) {
+// While the model writes a remark, the widget shows three dots where the last remark was.
+let thinking = null; // { since, about } or null
+
+async function brain(event, opts = {}) {
+  thinking = { since: Date.now(), about: clean(event.w?.title ?? "").slice(0, 40) || null };
+  try {
+    return await think(event, opts);
+  } finally {
+    thinking = null;
+  }
+}
+
+async function think(event, { model = tamagoSettings().model, now = Date.now() } = {}) {
   const act = event.kind === "back" || Math.random() < (event.kind.startsWith("touch") ? 0.6 : ACTION_CHANCE);
   // What this moment brings back. Replays of older moments (--compare) don't remember the future.
   let remembered = [];
@@ -1657,6 +1669,7 @@ function sidebarState() {
   return {
     pet: { species: chosenSpecies(), name: petName() },
     bubble: (({ situation, ...shown }) => shown)(currentBubble()), // the situation is only for the +1
+    thinking, // a remark on its way: the widget shows dots instead of the last one
     // Rounded: the mood drifts every poll, and the sidebar redraws (closing open menus) on every change.
     mood: { name, eye, valence: round1(m.valence), energy: round1(m.energy) },
     reaction,
