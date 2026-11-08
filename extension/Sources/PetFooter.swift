@@ -41,7 +41,7 @@ struct PetFooter: View {
         if reacting(at: .now) {
             TimelineView(.animation(minimumInterval: 1 / 30)) { footer(at: $0.date) }
         } else if model.daemon?.thinking != nil {
-            TimelineView(.periodic(from: .now, by: Self.dotSeconds)) { footer(at: $0.date) }
+            TimelineView(.animation(minimumInterval: 1 / 30)) { footer(at: $0.date) }
         } else {
             TimelineView(.periodic(from: .now, by: 1)) { footer(at: $0.date) }
         }
@@ -288,30 +288,36 @@ struct PetFooter: View {
         }
     }
 
-    static let dotSeconds = 0.4 // one step of the three dots
+    // The thinking dots: a wave, each dot jumping after the one before it, then a short rest.
+    static let bounceCycle = 1.2 // seconds for all three and the rest
+    static let bounceSeconds = 0.5 // one dot's jump, up and down
+    static let bounceStagger = 0.2 // the next dot starts this much later
+    static let bounceHeight: CGFloat = 3
 
-    /// The bubble while a remark is being written: three dots, one lit after the other.
+    /// The bubble while a remark is being written: three dots jumping in sequence, centered, with
+    /// an empty row above and below.
     private func musing(_ thinking: DaemonState.Thinking, seconds: Double) -> some View {
-        let step = Int((seconds - thinking.since / 1000) / Self.dotSeconds)
-        return VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let about = thinking.about, !about.isEmpty {
-                    Text("re: \(about)").font(.system(size: 9)).lineLimit(1).foregroundStyle(.secondary)
+        let t = (seconds - thinking.since / 1000).truncatingRemainder(dividingBy: Self.bounceCycle)
+        return VStack(spacing: 0) {
+            HStack(spacing: 2) {
+                ForEach(0..<3, id: \.self) { i in
+                    Text(".").font(.system(size: 11, design: .monospaced))
+                        .offset(y: -Self.bounceHeight * Self.lift(t - Double(i) * Self.bounceStagger))
                 }
-                HStack(spacing: 3) {
-                    ForEach(0..<3, id: \.self) { i in
-                        Text("●").font(.system(size: 9)).opacity(i == ((step % 3) + 3) % 3 ? 0.9 : 0.3)
-                    }
-                }
-                .padding(.vertical, 3)
             }
-            .padding(7)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7 + 13) // the bubble's padding plus one empty row of 11 pt text
             .background(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#8A8A8A")!, lineWidth: 1))
             Text("╲").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color(hex: "#8A8A8A")!)
                 .frame(maxWidth: .infinity)
                 .offset(x: -4)
         }
+    }
+
+    /// How high a dot is `dt` seconds into its jump: a half sine, zero before and after.
+    private static func lift(_ dt: Double) -> CGFloat {
+        guard dt > 0, dt < bounceSeconds else { return 0 }
+        return CGFloat(sin(.pi * dt / bounceSeconds))
     }
 
     /// Faint until clicked: a +1 says the developer loved this remark (counted once the bubble is gone).
