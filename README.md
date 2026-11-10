@@ -196,7 +196,7 @@ Each species' character in `daemon/mood.mjs` sets a baseline the mood drifts bac
 or two, when it's awake, how talkative it is, what it likes and hates, and how it takes feed, pet
 and poke. Finished turns are tagged by how they ended (a failed last tool call, failing or passing
 tests, slow or quick turns, giant or tidy diffs, commits, you up late at night) and the character
-feels the ones it cares about; so do hopping between sessions and long quiet stretches. Errors the
+feels the ones it cares about; so do hopping between sessions (felt and known, never a remark of its own) and long quiet stretches. Errors the
 agent recovered from don't count. Anything repeated within 10 minutes wears off, nice or annoying,
 so a busy session sways the mood without pinning it.
 
@@ -302,7 +302,7 @@ check. `scripts/package.sh v0.2.0` builds the same files locally into `build/dis
 
 ### How it works
 
-- `daemon/tamago.mjs` polls the cmux sidebar snapshot to notice workspace switches, hopping and
+- `daemon/tamago.mjs` polls the cmux sidebar snapshot to notice workspace switches (a remark only after a three-minute stay where work happened since the last visit), hopping and
   idle time, and reads finished turns from the Claude Code transcripts themselves (every
   `~/.claude*/projects`), so sessions started without cmux's hooks count too. When it decides to
   speak, it builds a prompt from `daemon/transcript.mjs` (a digest of the transcript), the

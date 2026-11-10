@@ -59,7 +59,9 @@ const CLAUDE = process.env.TAMAGO_CLAUDE ?? [
 const NAME = process.env.TAMAGO_NAME ?? "Tama";
 const POLL_MS = Number(process.env.TAMAGO_POLL_MS ?? 3000);
 const COOLDOWN_S = Number(process.env.TAMAGO_COOLDOWN_S ?? 150);
-const SWITCH_DWELL_S = 20;
+// A switch is worth a remark only after a real stay, and only where something happened since the
+// developer was last there: switching is how they work, not news.
+const SWITCH_DWELL_S = 180;
 // Tama is an observer, not a reply bot: it reacts after an agent turn ends, late and only sometimes.
 const [DELAY_MIN_S, DELAY_MAX_S] = (process.env.TAMAGO_DELAY_S ?? "20-90").split("-").map(Number);
 const CHANCE = Number(process.env.TAMAGO_CHANCE ?? 0.35);
@@ -1006,6 +1008,8 @@ let selectedId = null;
 let selectedSince = Date.now();
 let switchAnnounced = true;
 let switches = [];
+const leftAt = new Map(); // workspace id -> when the developer last switched away from it
+let hoppedAt = 0; // when the developer last hopped through six workspaces in two minutes
 let lastSpokeAt = 0;
 let lastActivityAt = Date.now();
 let busy = false;
@@ -1052,6 +1056,11 @@ function ago(ms) {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 }
 
+/** Background for a remark: the developer has been hopping between workspaces lately. */
+function hopNote(now = Date.now()) {
+  return now - hoppedAt < 15 * 60_000 ? "\nIn the last few minutes the developer has been hopping between workspaces a lot (background, not news)." : "";
+}
+
 function turnDetail(w, d, sel, felt = []) {
   const tools = Object.entries(d.tools).map(([k, v]) => `${k}×${v}`).join(", ");
   const looking = sel && sel.id !== w.id
@@ -1080,6 +1089,7 @@ function turnDetail(w, d, sel, felt = []) {
     d.commits ? `Commits this turn: ${d.commits}` : "",
     felt.length ? `How this turn felt to you: ${felt.map((f) => `${TAGS[f.tag]} (${f.weight > 0 ? "you like that" : "you hate that"})`).join(", ")}.` : "",
     `Turns in this session's recent history: ${d.turnsToday}`,
+    hopNote().trim(),
     elsewhere.length ? `Meanwhile in other workspaces:\n${elsewhere.join("\n")}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -1116,22 +1126,28 @@ function detect(snap) {
   }
 
   if (sel && sel.id !== selectedId) {
-    if (selectedId !== null) switches.push({ at: now, title: sel.title });
+    if (selectedId !== null) {
+      switches.push({ at: now, title: sel.title });
+      leftAt.set(selectedId, now);
+    }
     selectedId = sel.id;
     selectedSince = now;
     switchAnnounced = false;
   }
   switches = switches.filter((s) => now - s.at < 120_000);
+  // Hopping is felt (some species hate it) and known, but not a remark of its own.
   if (switches.length >= 6) {
-    const route = switches.map((s) => `"${s.title}"`).join(" → ");
     feelTags(["hopping"], sel.title);
-    events.push({ kind: "hopping", priority: 2, w: sel, detail: `The developer is hopping between sessions: ${switches.length} switches in two minutes (${route}).` });
+    hoppedAt = now;
     switches = [];
   }
   if (sel && !switchAnnounced && now - selectedSince > SWITCH_DWELL_S * 1000) {
     switchAnnounced = true;
-    if (Math.random() < SWITCH_CHANCE * talk().switch) {
-      events.push({ kind: "switch", priority: 1, w: sel, cues: cuesOf(sel.title, sel.latest_submitted_message ?? ""), detail: `${describe(sel)}\nThe developer just switched to this workspace and stayed.` + (sel.latest_submitted_message ? `\nLast prompt there: "${short(sel.latest_submitted_message, 150)}"` : "") });
+    const left = leftAt.get(sel.id);
+    const ended = transcriptOf(sel)?.lastTurnEndAt;
+    const news = !left || (ended && Date.parse(ended) > left);
+    if (news && Math.random() < SWITCH_CHANCE * talk().switch) {
+      events.push({ kind: "switch", priority: 1, w: sel, cues: cuesOf(sel.title, sel.latest_submitted_message ?? ""), detail: `${describe(sel)}\nThe developer switched to this workspace a few minutes ago and stayed.` + (left ? ` Work happened here since they were last in it ${ago(now - left)}.` : "") + hopNote(now) + (sel.latest_submitted_message ? `\nLast prompt there: "${short(sel.latest_submitted_message, 150)}"` : "") });
     }
   }
   // A quiet stretch gets at most one remark, and usually none: with nothing new to look at, Tama
