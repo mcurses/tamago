@@ -90,6 +90,31 @@ test("digest: a turn that started by itself counts only what happened since the 
   assert.deepEqual(l.tools, { Read: 1 });
 });
 
+test("digest: a compaction summary is never the prompt, and starts the turn after it", () => {
+  const summary = "This session is being continued from a previous conversation that ran out of context. The summary below covers it.";
+  const file = writeTranscript("compacted.jsonl", [
+    user("make the bubble show dots"),
+    toolUse("Bash", { command: "git commit -m 'old work'" }),
+    turnEnd(1000),
+    user(summary, { isCompactSummary: true, isVisibleInTranscriptOnly: true }),
+    toolUse("Read", { file_path: "x" }),
+    said("Picked up where we left off."),
+    turnEnd(2000),
+  ]);
+  const d = digest(file);
+  assert.equal(d.prompt, "make the bubble show dots");
+  assert.ok(!d.earlierPrompts.some((p) => p.startsWith("This session")));
+  assert.equal(d.continued, true);
+  assert.equal(d.commits, 0);
+  assert.deepEqual(d.tools, { Read: 1 });
+  // An older transcript without the flag, and only the summary in the tail: still not a prompt.
+  const bare = writeTranscript("compacted-bare.jsonl", [user(summary), toolUse("Read", { file_path: "y" }), said("Resumed."), turnEnd(500)]);
+  const b = digest(bare);
+  assert.equal(b.prompt, null);
+  assert.deepEqual(b.tools, { Read: 1 });
+  assert.equal(b.said, "Resumed.");
+});
+
 test("digest: an unfinished turn is not ended and has no duration", () => {
   const file = writeTranscript("running.jsonl", [user("still going"), toolUse("Read", { file_path: "x" })]);
   const d = digest(file);

@@ -108,7 +108,7 @@ const MAX_TAIL_BYTES = 48 * 1024 * 1024;
 function readTurnTail(file) {
   for (let bytes = TAIL_BYTES; ; bytes *= 4) {
     const { entries, whole } = readTail(file, bytes);
-    if (whole || bytes >= MAX_TAIL_BYTES || entries.some(promptText)) return entries;
+    if (whole || bytes >= MAX_TAIL_BYTES || entries.some((e) => promptText(e) || compacted(e))) return entries;
   }
 }
 
@@ -140,9 +140,21 @@ const resultText = (b) =>
   typeof b.content === "string" ? b.content : Array.isArray(b.content) ? b.content.map((c) => c.text ?? "").join("\n") : "";
 const lineCount = (s) => (typeof s === "string" && s ? s.split("\n").length : 0);
 
-/** A real prompt typed by the user, as opposed to tool results, meta entries or subagent traffic. */
+/** The summary Claude Code writes after a context compaction. It arrives as a user message but
+ * nobody typed it: it starts the next stretch of work, and is never the developer's prompt. */
+const COMPACTED = /^This session is being continued from a previous conversation/;
+function compacted(e) {
+  if (e.type !== "user" || e.isSidechain) return false;
+  if (e.isCompactSummary) return true;
+  const c = e.message?.content;
+  const text = typeof c === "string" ? c : blocks(e).find((b) => b.type === "text")?.text ?? "";
+  return COMPACTED.test(text);
+}
+
+/** A real prompt typed by the user, as opposed to tool results, meta entries, compaction
+ * summaries or subagent traffic. */
 function promptText(e) {
-  if (e.type !== "user" || e.isSidechain || e.isMeta) return null;
+  if (e.type !== "user" || e.isSidechain || e.isMeta || compacted(e)) return null;
   const c = e.message?.content;
   if (typeof c === "string") return c.startsWith("<") ? null : c; // skip <command-…>/<local-…> wrappers
   if (blocks(e).some((b) => b.type === "tool_result")) return null;
@@ -173,6 +185,7 @@ function excerptOf(edit) {
 export function digest(file, { until = Infinity } = {}) {
   const entries = readTurnTail(file).filter((e) => !e.timestamp || Date.parse(e.timestamp) <= until);
   let promptIdx = -1;
+  let compactIdx = -1;
   const prompts = [];
   const endIdx = [];
   let turnsToday = 0;
@@ -183,6 +196,7 @@ export function digest(file, { until = Infinity } = {}) {
       promptIdx = i;
       prompts.push(p);
     }
+    if (compacted(e)) compactIdx = i;
     if (e.type === "system" && e.subtype === "turn_duration") {
       endIdx.push(i);
       if (new Date(e.timestamp).toDateString() === today) turnsToday++;
@@ -194,8 +208,10 @@ export function digest(file, { until = Infinity } = {}) {
   const lastEnd = endIdx.at(-1) ?? -1;
   const running = entries.slice(lastEnd + 1).some((e) => !e.isSidechain && (e.type === "assistant" || e.type === "user"));
   const prevEnd = (running ? lastEnd : endIdx.at(-2)) ?? -1;
-  const continued = prevEnd > promptIdx;
-  const turn = promptIdx >= 0 ? entries.slice(Math.max(promptIdx, prevEnd) + 1).filter((e) => !e.isSidechain) : [];
+  // A compaction summary also starts a stretch: what came before it is the old context.
+  const start = Math.max(promptIdx, prevEnd, compactIdx);
+  const continued = start > promptIdx;
+  const turn = promptIdx >= 0 || compactIdx >= 0 ? entries.slice(start + 1).filter((e) => !e.isSidechain) : [];
   const lastTurnEndAt = lastEnd >= 0 ? entries[lastEnd].timestamp : null;
   const tools = {};
   const errors = [];

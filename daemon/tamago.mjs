@@ -1074,7 +1074,7 @@ function turnDetail(w, d, sel, felt = []) {
     describe(w),
     `A coding-agent turn in this workspace just ended${d.durationMs ? ` after ${Math.round(d.durationMs / 1000)}s` : ""}.`,
     looking,
-    d.continued ? "Nobody typed anything for this turn: the agent went on by itself after its last turn ended (a timer, a wait, a notification). What follows is only what it did since then." : "",
+    d.continued ? "Nobody typed anything for this turn: the agent went on by itself after its last turn ended (a timer, a wait, a notification, a context compaction). What follows is only what it did since then." : "",
     d.prompt ? `${d.continued ? "The prompt it has been working from" : "The developer had asked"}: "${short(d.prompt, 500)}"` : "",
     d.earlierPrompts.length ? `Earlier prompts here: ${d.earlierPrompts.map((p) => `"${short(p, 80)}"`).join(" / ")}` : "",
     d.said ? `The agent's last words: "${short(d.said, 900)}"` : "",
