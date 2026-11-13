@@ -18,6 +18,7 @@ struct PetFooter: View {
     /// it has something to say, which shows the bubble on hover; a click marks it read.
     var collapsed = false
     @State private var renaming = false
+    @State private var showingHistory = false
     @State private var hoveringAbout = false
     @State private var hoveringDot = false
     @State private var hoveringSpeech = false
@@ -33,6 +34,9 @@ struct PetFooter: View {
         }
         .contentShape(Rectangle())
         .contextMenu { menu }
+        .popover(isPresented: $showingHistory, arrowEdge: collapsed ? .trailing : .top) {
+            HistoryList(model: model)
+        }
     }
 
     @ViewBuilder private var live: some View {
@@ -352,6 +356,7 @@ struct PetFooter: View {
             }
         }
         Button("Rename \(name)…") { renaming = true }
+        Button("History…") { showingHistory = true }
         Menu("Settings") {
             Menu("Model") {
                 let current = settings?.model ?? "sonnet"
@@ -410,6 +415,53 @@ struct PetFooter: View {
         if seconds < 60 { return "just now" }
         if seconds < 3600 { return "\(Int(seconds / 60))m ago" }
         return "\(Int(seconds / 3600))h ago"
+    }
+}
+
+/// Everything Tama said lately, newest first: when, what about, in what mood, and the line itself.
+struct HistoryList: View {
+    @ObservedObject var model: PetModel
+    @State private var remarks: [Remark]?
+
+    var body: some View {
+        Group {
+            if let remarks, !remarks.isEmpty {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(remarks) { row($0) }
+                    }
+                    .padding(14)
+                }
+            } else {
+                Text(remarks == nil ? (model.daemonOnline ? "Reading the diary…" : "Tama is asleep.") : "Nothing said yet.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(width: 360, height: 460)
+        .task { remarks = await model.history() ?? (model.daemonOnline ? [] : nil) }
+    }
+
+    private func row(_ r: Remark) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text([Self.when(r.at), r.about.map { "re: \($0)" }, r.mood].compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+            Text(r.text).font(.system(size: 12)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let action = r.action, !action.isEmpty {
+                Text(action).italic().font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static let time: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f }()
+    private static let day: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM, HH:mm"; return f }()
+
+    static func when(_ at: Double) -> String {
+        let date = Date(timeIntervalSince1970: at / 1000)
+        if Calendar.current.isDateInToday(date) { return time.string(from: date) }
+        if Calendar.current.isDateInYesterday(date) { return "yesterday " + time.string(from: date) }
+        return day.string(from: date)
     }
 }
 

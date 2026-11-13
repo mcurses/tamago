@@ -88,6 +88,9 @@ class PetModel: ObservableObject {
         }
     }
 
+    /// What Tama said, newest first; nil when the daemon can't be reached.
+    func history() async -> [Remark]? { try? await client.history() }
+
     /// Sends an action to the daemon, e.g. `act("pin", workspace: id)`.
     func act(_ type: String, workspace: UUID? = nil, _ extra: [String: String] = [:]) {
         var body = extra

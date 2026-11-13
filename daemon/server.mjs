@@ -3,6 +3,7 @@
 // server on 127.0.0.1 instead. Requests must carry the token baked into the extension at build time.
 //
 //   GET  /state   -> { pet, bubble, thinking, workspaces: { <id>: { color, description } } }
+//   GET  /history -> [{ at, kind, about, mood, text, action }], newest first (the menu's History)
 //   POST /action  { type, ... } -> { ok: true } | { ok: false, error }
 
 import http from "node:http";
@@ -10,7 +11,7 @@ import crypto from "node:crypto";
 
 const MAX_BODY = 16 * 1024;
 
-export function startServer({ port, token, getState, act, log }) {
+export function startServer({ port, token, getState, getHistory = () => [], act, log }) {
   const expected = Buffer.from(token);
   const authorized = (req) => {
     const got = Buffer.from(String(req.headers["x-tamago-token"] ?? ""));
@@ -44,6 +45,7 @@ export function startServer({ port, token, getState, act, log }) {
       }
       return reply(res, 200, getState());
     }
+    if (req.method === "GET" && req.url === "/history") return reply(res, 200, getHistory());
     if (req.method !== "POST" || req.url !== "/action") return reply(res, 404, { ok: false, error: "not found" });
     let body = "";
     req.on("data", (chunk) => {

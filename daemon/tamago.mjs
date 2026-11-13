@@ -602,9 +602,9 @@ const SHAPES_COUNTED = 20; // lines whose shape counts toward the budgets (varie
 const HISTORY_MAX_AGE_MS = 24 * 3600_000;
 const history = readHistory(); // [{ at, kind, about, mood, text }]
 
-function readHistory() {
+function readHistory(lines = 200) {
   try {
-    return fs.readFileSync(HISTORY, "utf8").trim().split("\n").slice(-200).flatMap((l) => {
+    return fs.readFileSync(HISTORY, "utf8").trim().split("\n").slice(-lines).flatMap((l) => {
       try {
         return [JSON.parse(l)];
       } catch {
@@ -614,6 +614,14 @@ function readHistory() {
   } catch {
     return [];
   }
+}
+
+// What Tama said, newest first, for the menu's History: read from the diary file, since `history`
+// keeps only the last 200 entries in memory. Silent turns ("-") are left out.
+const HISTORY_LISTED = 500;
+function saidLately() {
+  const said = (DRY ? history : readHistory(HISTORY_LISTED * 2)).filter((h) => h.text && h.text !== "-");
+  return said.slice(-HISTORY_LISTED).reverse().map(({ at, kind, about, mood, text, action }) => ({ at, kind, about, mood, text, action: action ?? null }));
 }
 
 function remember(entry) {
@@ -1845,7 +1853,7 @@ if (!DRY) {
     saveMemory();
     log(`remembered ${memory.items.length} moments from the diary`);
   }
-  startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, act: sidebarAction, log });
+  startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, getHistory: saidLately, act: sidebarAction, log });
   // Hourly, but checkForUpdate asks GitHub at most once a day.
   let told = null;
   const updates = () =>

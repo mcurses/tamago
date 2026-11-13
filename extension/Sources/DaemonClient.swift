@@ -133,6 +133,17 @@ struct DaemonState: Decodable, Equatable, Sendable {
     var workspaces: [String: Workspace]
 }
 
+/// One line from Tama's diary, for the History list.
+struct Remark: Decodable, Equatable, Sendable, Identifiable {
+    var at: Double // epoch milliseconds
+    var kind: String?
+    var about: String?
+    var mood: String?
+    var text: String
+    var action: String?
+    var id: Double { at }
+}
+
 /// Talks to the daemon on 127.0.0.1. The token is the daemon's ~/.local/state/tamago/token, which
 /// the sandbox lets the extension read through a read-only exception (scripts/build-extension.sh),
 /// so one build works for everyone. It's read per request, so a new token takes effect at once.
@@ -158,6 +169,12 @@ struct DaemonClient: Sendable {
     func state() async throws -> DaemonState {
         let data = try await send(URLRequest(url: base.appendingPathComponent("state")))
         return try JSONDecoder().decode(DaemonState.self, from: data)
+    }
+
+    /// What Tama said, newest first (the menu's History).
+    func history() async throws -> [Remark] {
+        let data = try await send(URLRequest(url: base.appendingPathComponent("history")))
+        return try JSONDecoder().decode([Remark].self, from: data)
     }
 
     func action(_ body: [String: String]) async throws {
