@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Tama with its speech bubble and menu. Shared by the cmux sidebar and the meum widget.
@@ -100,10 +101,17 @@ struct PetFooter: View {
                             .onHover { inside in hoveringSpeech = inside; updateSpeech() }
                     }
                 }
-            sprite(pet, seconds: seconds, size: 7)
-                .fixedSize()
-                .opacity(model.daemonOnline ? 1 : 0.4) // dimmed while the daemon is down, as "asleep" in full
-                .help(model.daemonOnline ? name : "\(name) · asleep")
+            if model.unreachable {
+                Text("?")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .help(Self.unreachableText)
+            } else {
+                sprite(pet, seconds: seconds, size: 7)
+                    .fixedSize()
+                    .opacity(model.daemonOnline ? 1 : 0.4) // dimmed while the daemon is down, as "asleep" in full
+                    .help(model.daemonOnline ? name : "\(name) · asleep")
+            }
         }
         .padding(.top, 6)
         .padding(.bottom, bottomInset)
@@ -140,10 +148,21 @@ struct PetFooter: View {
             // Sprite centered with the name below it, both in fixed boxes, so changing text never
             // moves Tama.
             VStack(spacing: 3) {
-                sprite(pet, seconds: seconds)
-                    .frame(width: Self.spriteWidth)
-                nameField
-                    .frame(width: Self.tagWidth)
+                if model.unreachable {
+                    // No state from the daemon: say so, instead of a default egg called "Tama" that
+                    // looks like the pet was reset.
+                    Text("Can't reach Tama")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(Self.unreachableText)
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    sprite(pet, seconds: seconds)
+                        .frame(width: Self.spriteWidth)
+                    nameField
+                        .frame(width: Self.tagWidth)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 12) // room for hearts and anger marks
@@ -386,7 +405,14 @@ struct PetFooter: View {
                 Text("Workspace details: cmux Settings → Sidebar")
             }
         }
-        if let version = model.daemon?.version {
+        if !inCmux {
+            // meum's widget library installs Tamago's updates; the daemon can't update itself here.
+            Divider()
+            if let version = model.daemon?.version { Text("Tamago \(version.current)") }
+            Button("Update in meum Settings → Widgets") {
+                if let url = URL(string: "meum://settings?pane=widgets") { NSWorkspace.shared.open(url) }
+            }
+        } else if let version = model.daemon?.version {
             Divider()
             if let latest = version.latest {
                 if version.updating == true {
@@ -401,6 +427,9 @@ struct PetFooter: View {
     }
 
     private var settings: DaemonState.TamagoSettings? { model.daemon?.tamagoSettings }
+
+    static let unreachableText = "Its daemon isn't answering. It's restarted on its own; if this stays, the Tamago log says why."
+
 
     private func checked(_ on: Bool, _ label: String) -> String { on ? "✓ " + label : label }
 

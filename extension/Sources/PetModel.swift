@@ -7,6 +7,10 @@ import SwiftUI
 class PetModel: ObservableObject {
     @Published private(set) var daemon: DaemonState?
     @Published private(set) var daemonOnline = false
+    /// True once the daemon has been asked at least once, so "can't reach it" isn't shown at launch.
+    @Published private(set) var polled = false
+    /// The daemon never answered: no state to draw, so no egg and no "Tama" pretending to be the pet.
+    var unreachable: Bool { polled && daemon == nil && !daemonOnline }
     /// The remark (its `at`) last marked read by a click on the collapsed sidebar's dot.
     @Published var readBubbleAt: Double?
     /// No polling while nobody can see Tama (the meum widget sets this from its visibility).
@@ -31,6 +35,7 @@ class PetModel: ObservableObject {
         client = DaemonClient()
         daemon = state
         daemonOnline = true
+        polled = true
     }
 
     private func watchMenus() {
@@ -86,6 +91,7 @@ class PetModel: ObservableObject {
         } catch {
             if daemonOnline { daemonOnline = false }
         }
+        if !polled { polled = true }
     }
 
     /// What Tama said, newest first; nil when the daemon can't be reached.
