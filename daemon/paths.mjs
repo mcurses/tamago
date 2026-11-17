@@ -24,3 +24,31 @@ export function stateDir(env = process.env, home = os.homedir()) {
   if (fs.existsSync(path.join(meum, "token"))) return meum;
   return path.join(home, ".local/state/tamago");
 }
+
+/** Where a standalone (cmux) install keeps its Tama. */
+export function standaloneDir(home = os.homedir()) {
+  return path.join(home, ".local/state/tamago");
+}
+
+// What makes up a Tama: who it is, what it remembers and said, and its settings. Not the token,
+// pid, log or update check, which belong to the install, not the pet.
+export const PET_FILES = ["pet.json", "species.json", "mood.json", "memories.json", "notebook.json", "history.jsonl", "liked.jsonl", "settings.json"];
+
+/**
+ * Brings a standalone install's Tama into meum's data folder, once: only while meum's folder has no
+ * pet of its own yet. Copies, so the standalone folder stays as it was. Returns the files copied.
+ */
+export function adoptStandalonePet(dest, from = standaloneDir()) {
+  if (path.resolve(dest) === path.resolve(from)) return [];
+  const hasPet = (dir) => ["pet.json", "species.json"].some((f) => fs.existsSync(path.join(dir, f)));
+  if (hasPet(dest) || !hasPet(from)) return [];
+  fs.mkdirSync(dest, { recursive: true });
+  const copied = [];
+  for (const f of PET_FILES) {
+    const src = path.join(from, f);
+    if (!fs.existsSync(src) || fs.existsSync(path.join(dest, f))) continue;
+    fs.copyFileSync(src, path.join(dest, f));
+    copied.push(f);
+  }
+  return copied;
+}

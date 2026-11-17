@@ -35,7 +35,8 @@ import { startServer } from "./server.mjs";
 import { repeats } from "./repeats.mjs";
 import { firstJson } from "./json.mjs";
 import { meumCli, snapshotFromTree, tabOwners, hookEvent } from "./meum.mjs";
-import { stateDir } from "./paths.mjs";
+import { stateDir, adoptStandalonePet, standaloneDir } from "./paths.mjs";
+import { listenerOf, stopStandalone, isStandalone, commandOf } from "./takeover.mjs";
 import { defaults as settingDefaults, parseSetting, talkProfile } from "./settings.mjs";
 import { latestRelease, installRelease, newer } from "./update.mjs";
 import { resolveSettings, readCmuxJson, parseSidebarState, snapshotDetails, eventWorkspace, parseListening } from "./details.mjs";
@@ -93,6 +94,14 @@ function log(...parts) {
   const line = `${new Date().toISOString()} ${parts.join(" ")}`;
   console.log(line);
   fs.appendFileSync(LOG, line + "\n");
+}
+
+// meum's helper (MEUM_WIDGET_DATA): Tama lives in meum's data folder. A Tama from a standalone
+// install comes along the first time, so switching to the widget doesn't hatch a new egg.
+const MEUM_HELPER = Boolean(process.env.MEUM_WIDGET_DATA);
+if (MEUM_HELPER && !DRY && !process.env.TAMAGO_STATE_DIR) {
+  const copied = adoptStandalonePet(STATE_DIR);
+  if (copied.length) log(`brought Tama over from the standalone install: ${copied.join(", ")}`);
 }
 
 async function cmux(...a) {
@@ -1535,6 +1544,22 @@ if (args[0] === "--say" || args[0] === "--listen") {
   process.exit(0);
 }
 
+/**
+ * The server can't listen. As meum's helper, a standalone Tamago holding the port is stopped and the
+ * port taken; anything else ends this daemon, so meum restarts it with backoff instead of keeping a
+ * helper the widget can't reach. Elsewhere it ends too: a Tama nobody can reach is no use.
+ */
+let takeovers = 0;
+async function serverFailed(err, retry) {
+  if (err.code === "EADDRINUSE" && MEUM_HELPER && takeovers++ < 3) {
+    const holder = listenerOf(PORT);
+    if (await stopStandalone(holder, { log })) return retry();
+    log(`port ${PORT} is held by ${holder ? `pid ${holder}: ${commandOf(holder) ?? "?"}` : "an unknown process"}`);
+  }
+  log("exiting: the widget can't reach a daemon without its server");
+  process.exit(1);
+}
+
 /** The pid of another daemon running on this state, or null. */
 function otherDaemon() {
   try {
@@ -1547,10 +1572,21 @@ function otherDaemon() {
   }
 }
 
+// As meum's helper, stop a standalone daemon on this state (the widget runs Tama now), or wait for
+// another helper to exit and take over then (meum would only restart us with backoff); anywhere
+// else, leave it running.
+if (otherDaemon() && MEUM_HELPER && isStandalone(commandOf(otherDaemon()))) await stopStandalone(otherDaemon(), { log });
+// A standalone install's own daemon, on its own state, goes too: two Tamas would talk over each other,
+// and its port is the widget's.
+if (MEUM_HELPER && !DRY) {
+  let standalonePid = null;
+  try {
+    standalonePid = Number(fs.readFileSync(path.join(standaloneDir(), "tamago.pid"), "utf8").trim()) || null;
+  } catch {}
+  await stopStandalone(standalonePid, { log });
+}
 if (otherDaemon()) {
-  // As meum's helper, wait for it and take over when it exits (meum would only restart us with
-  // backoff); anywhere else, leave it running.
-  if (!process.env.MEUM_WIDGET_DATA) {
+  if (!MEUM_HELPER) {
     console.error(`tamago already running (pid ${otherDaemon()})`);
     process.exit(1);
   }
@@ -1853,7 +1889,7 @@ if (!DRY) {
     saveMemory();
     log(`remembered ${memory.items.length} moments from the diary`);
   }
-  startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, getHistory: saidLately, act: sidebarAction, log });
+  startServer({ port: PORT, token: fs.readFileSync(TOKEN_FILE, "utf8").trim(), getState: sidebarState, getHistory: saidLately, act: sidebarAction, log, onError: serverFailed });
   // Hourly, but checkForUpdate asks GitHub at most once a day.
   let told = null;
   const updates = () =>

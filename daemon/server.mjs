@@ -11,7 +11,9 @@ import crypto from "node:crypto";
 
 const MAX_BODY = 16 * 1024;
 
-export function startServer({ port, token, getState, getHistory = () => [], act, log }) {
+// `onError(err, retry)`: what to do when the server can't listen (the port is taken, say); `retry()`
+// listens again. Without one the error is only logged.
+export function startServer({ port, token, getState, getHistory = () => [], act, log, onError }) {
   const expected = Buffer.from(token);
   const authorized = (req) => {
     const got = Buffer.from(String(req.headers["x-tamago-token"] ?? ""));
@@ -62,7 +64,12 @@ export function startServer({ port, token, getState, getHistory = () => [], act,
       }
     });
   });
-  server.on("error", (err) => log("sidebar server failed:", err.message));
-  server.listen(port, "127.0.0.1", () => log(`sidebar server on 127.0.0.1:${port}`));
+  const listen = () => server.listen(port, "127.0.0.1");
+  server.on("listening", () => log(`sidebar server on 127.0.0.1:${port}`));
+  server.on("error", (err) => {
+    log("sidebar server failed:", err.message);
+    onError?.(err, listen);
+  });
+  listen();
   return server;
 }
