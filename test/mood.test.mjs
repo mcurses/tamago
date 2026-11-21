@@ -147,3 +147,24 @@ test("a special moment moves the mood and is named among the causes", () => {
   assert.equal(s.valence, 0.2);
   assert.match(describeMood(s, egg, 61_000), /a moment that felt special \(1 min ago, you liked it\)/);
 });
+
+test("touch: Listen cheers up the species that like being asked and never hurts any", () => {
+  const cactus = characterOf("cactus");
+  const robot = characterOf("robot");
+  const start = initialMood(cactus, 0);
+  const heard = touch(start, cactus, "listen", 0);
+  assert.equal(heard.reaction, "love");
+  assert.ok(heard.state.valence > start.valence);
+  const calm = touch(initialMood(robot, 0), robot, "listen", 0);
+  assert.equal(calm.reaction, "meh");
+  assert.equal(calm.state.valence, initialMood(robot, 0).valence);
+  // Asked again and again: less of a treat, never a hate.
+  let s = start;
+  for (let i = 0; i < 6; i++) {
+    const r = touch(s, cactus, "listen", i * 1000);
+    assert.notEqual(r.reaction, "hate");
+    assert.ok(r.state.valence >= s.valence);
+    s = r.state;
+  }
+  assert.equal(touch(s, cactus, "listen", 7000).reaction, "meh");
+});

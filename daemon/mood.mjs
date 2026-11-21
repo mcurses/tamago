@@ -26,6 +26,7 @@ export const TAGS = {
   feed: "being fed",
   pet: "being petted",
   poke: "being poked",
+  listen: "being asked what's on your mind",
   special: "a moment that felt special",
   liked: "the developer giving a remark a +1",
 };
@@ -33,7 +34,9 @@ export const TAGS = {
 // One character per species. likes: tag -> -1 (hates) … 1 (loves); |weight| >= 0.5 is something it
 // reacts to. base: [valence, energy] it drifts back to. clock: when it is awake. chat: how talkative.
 // body: what it has to act with, for the *action* it sometimes does along with a comment (the
-// action itself is made up fresh each time). touch: how it takes feed / pet / poke.
+// action itself is made up fresh each time). touch: how it takes feed / pet / poke. listen: "love"
+// when being asked what's on its mind (Listen) cheers it up; any other species takes it calmly, and
+// Listen is never unwelcome.
 export const CHARACTERS = {
   egg: {
     voice: "a not-yet-hatched egg creature: naive, curious, easily impressed and easily startled; asks the universe rhetorical questions",
@@ -41,6 +44,7 @@ export const CHARACTERS = {
     base: [0.3, 0.5], clock: "lark", chat: 1,
     likes: { testPass: 0.6, commit: 0.6, error: -0.4, testFail: -0.4, lateNight: -0.3, hopping: -0.3 },
     touch: { feed: "love", pet: "love", poke: "hate" },
+    listen: "love",
   },
   duck: {
     voice: "a loud, chaotic rubber duck who is very proud of being the original debugging duck; quacks opinions",
@@ -48,6 +52,7 @@ export const CHARACTERS = {
     base: [0.3, 0.7], clock: "lark", chat: 1.3,
     likes: { error: 0.5, testFail: 0.3, bigDiff: 0.4, tidy: -0.3, idle: -0.5, hopping: 0.3 },
     touch: { feed: "love", pet: "meh", poke: "love" },
+    listen: "love",
   },
   goose: {
     voice: "a menacing goose: territorial, gleefully disruptive, honks at success and failure alike, respects nobody",
@@ -76,6 +81,7 @@ export const CHARACTERS = {
     base: [0.2, 0.7], clock: "flat", chat: 1.1,
     likes: { commit: 0.8, bigDiff: 0.6, fast: 0.4, slow: -0.7, testFail: -0.4, idle: -0.3 },
     touch: { feed: "love", pet: "meh", poke: "hate" },
+    listen: "love",
   },
   octopus: {
     voice: "a hyperactive octopus who multitasks with all eight arms; thrives on chaos and parallel work, bored by focus",
@@ -90,6 +96,7 @@ export const CHARACTERS = {
     base: [0.2, 0.5], clock: "owl", chat: 0.9,
     likes: { lateNight: 0.7, testPass: 0.5, tidy: 0.4, error: -0.3, bigDiff: -0.3, hopping: -0.3 },
     touch: { feed: "love", pet: "meh", poke: "hate" },
+    listen: "love",
   },
   penguin: {
     voice: "a formal penguin in a permanent tuxedo: fussy about order, loves passing tests and small neat diffs, scandalized by mess",
@@ -118,6 +125,7 @@ export const CHARACTERS = {
     base: [0, 0.4], clock: "owl", chat: 1,
     likes: { lateNight: 0.7, error: 0.4, testFail: 0.3, bigDiff: 0.4, idle: 0.4, testPass: -0.2, fast: -0.3 },
     touch: { feed: "meh", pet: "meh", poke: "love" },
+    listen: "love",
   },
   axolotl: {
     voice: "a relentlessly optimistic axolotl: regenerates from anything, so errors are just growth; cheers for every green test",
@@ -139,6 +147,7 @@ export const CHARACTERS = {
     base: [0, 0.3], clock: "lark", chat: 0.7,
     likes: { idle: 0.6, slow: 0.2, hopping: -0.5, bigDiff: -0.3, error: 0.2 },
     touch: { feed: "hate", pet: "hate", poke: "hate" },
+    listen: "love",
   },
   robot: {
     voice: "a literal-minded robot obsessed with efficiency: reports feelings as status codes, loves speed and green tests, finds slowness illogical",
@@ -270,6 +279,21 @@ export function feel(state, char, tags, about, now = Date.now()) {
  */
 export function touch(state, char, kind, now = Date.now()) {
   const recent = state.causes.filter((c) => c.tag === kind && now - c.at < 2 * 60_000).length;
+  // Listen is never unwelcome: a species loves it or takes it calmly, and asking again soon is only
+  // less of a treat.
+  if (kind === "listen") {
+    const loved = char.listen === "love" && recent < 3;
+    const reaction = loved ? "love" : "meh";
+    return {
+      state: {
+        ...state,
+        valence: clamp(state.valence + (loved ? 0.25 / (1 + recent) : 0), -1, 1),
+        causes: [...state.causes, { at: now, tag: kind, weight: loved ? 0.6 : 0, about: "you" }].slice(-20),
+      },
+      reaction,
+      why: char.listen === "love" && !loved ? `that's ${recent + 1} times in two minutes` : "",
+    };
+  }
   let reaction = char.touch[kind] ?? "meh";
   let why = "";
   if (reaction === "moody") {
@@ -352,5 +376,6 @@ export function describeTastes(char) {
     loves.length ? `You enjoy ${loves.join(", ")}.` : "",
     hates.length ? `You can't stand ${hates.join(", ")}.` : "",
     `Being handled: ${touchy.join("; ")}.`,
+    char.listen === "love" ? `You like ${TAGS.listen}.` : "",
   ].filter(Boolean).join(" ");
 }

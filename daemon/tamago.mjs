@@ -1787,11 +1787,15 @@ async function onTouch(kind) {
 async function onListen() {
   if (busy) return;
   const sel = latestSnap?.workspaces.find((w) => w.selected);
+  const r = touch(currentMood(), character(), "listen");
+  mood = r.state;
+  currentMood(true);
+  log("listen →", r.reaction, r.why, "→", moodName(mood).name);
+  const glad = r.reaction === "love" ? " You like being asked; it cheered you up a little." : "";
   const event = {
     kind: "listen",
-    detail: "The developer asked what's on your mind (Listen, from your sidebar menu). This is the one time you do respond to them: tell them how you feel and why, in character and in your current mood, from your mood and what shaped it below. Name the real things that moved you. If the feeling underneath has no reason, say that you don't know why, and don't blame the work for it. Don't claim anything happened that isn't stated here.",
+    detail: `The developer asked what's on your mind (Listen, from your sidebar menu).${glad} This is the one time you do respond to them: tell them how you feel and why, in character and in your current mood, from your mood and what shaped it below. Name the real things that moved you. If the feeling underneath has no reason, say that you don't know why, and don't blame the work for it. Don't claim anything happened that isn't stated here.`,
   };
-  log("listen →", moodName(currentMood()).name);
   busy = true;
   (async () => {
     try {
